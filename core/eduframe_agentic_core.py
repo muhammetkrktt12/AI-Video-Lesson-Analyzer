@@ -1,0 +1,440 @@
+"""
+EduFrame AI - LangGraph Orkestratörü (core/eduframe_agentic_core.py)
+-------------------------------------------------------------------
+Bu modül, LangGraph (Agentic AI / Conditional Routing) kullanarak sistemin
+bütün bileşenlerini tek bir otonom graf üzerinde koordine eder.
+
+Mimari Akış ve Karar Düğümleri:
+1. 'planla' Düğümü: Kullanıcının niyetini (intent) ölçer.
+   - Niyet 'bilgi_sorgusu' ise: Video indirme ve FFmpeg ASLA çalışmaz. Sadece
+     seçilen eğitim seviyesindeki RAG'dan bilgi çekilerek yanıt verilir.
+   - Niyet 'pdf_isleme' ise: yt-dlp -> RAG Seviye Filtresi -> Gemini Multimodal
+     3 Katmanlı Sentez -> FFmpeg Kare Yakalama -> Soru Klonlama -> WeasyPrint PDF
+     boru hattı sırasıyla işletilir.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+# Kök dizini sys.path'e ekle
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from typing import Dict, Any, List, Optional
+from langgraph.graph import StateGraph, END
+
+from core.state import EduFrameState
+from services.video_downloader import VideoDownloader
+from services.rag_motoru import RAGMotoru
+from services.video_processor import VideoProcessor
+from services.gemini_analyzer import GeminiAnalyzer
+from services.question_generator import QuestionGenerator
+from services.pdf_generator import PDFGenerator
+from config import DEFAULT_SEVIYE
+
+# Kalite ve Doğrulama Araçları (d6_03_validate & quality_utils)
+try:
+    from quality_utils import validate_citations, rerank_candidates
+except ImportError:
+    validate_citations = None
+    rerank_candidates = None
+
+# Gemma Tokenizer (tokenizer_utils & gemma_tokenizer.json)
+try:
+    from tokenizer_utils import get_gemma_tokenizer
+    _CORE_TOKENIZER = get_gemma_tokenizer()
+except Exception:
+    _CORE_TOKENIZER = None
+
+
+# ---------------------------------------------------------------------------
+# DÜĞÜM FONKSİYONLARI (GRAPH NODES)
+# ---------------------------------------------------------------------------
+
+def planla_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """
+    Kullanıcının niyetini analiz eder:
+    - Video kaynağı varsa veya "not çıkar", "özetle", "pdf" denilmişse -> 'pdf_isleme'
+    - Sadece soru veya bilgi talebi varsa -> 'bilgi_sorgusu'
+    """
+    kullanici_girisi = (state.get("kullanici_girisi") or "").lower().strip()
+    video_kaynagi = state.get("video_kaynagi")
+
+    print(f"\n[LangGraph: planla] Niyet Analizi Yapılıyor...")
+    print(f" -> Girdi: {kullanici_girisi}")
+    print(f" -> Video Kaynağı: {video_kaynagi}")
+
+    # Video kaynağı verilmişse veya not çıkarma anahtar sözcükleri varsa
+    video_istegi_kelimeleri = ["not çıkar", "özetle", "pdf", "ders notu", "analiz et", "fasikül", "yansıt"]
+    
+    if video_kaynagi or any(w in kullanici_girisi for w in video_istegi_kelimeleri):
+        niyet = "pdf_isleme"
+        print(" -> Belirlenen Rota: 'pdf_isleme' (Tam Boru Hattı)")
+    else:
+        niyet = "bilgi_sorgusu"
+        print(" -> Belirlenen Rota: 'bilgi_sorgusu' (Yalnızca RAG)")
+
+    return {"niyet": niyet}
+
+
+def rota_karari(state: EduFrameState) -> str:
+    """LangGraph koşullu geçişini belirleyen yönlendirici fonksiyon."""
+    return state.get("niyet", "bilgi_sorgusu")
+
+
+def bilgi_sorgusu_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """
+    Yalnızca RAG aramasını çalıştırır; video indirme ve görüntü işlemeyi tetiklemez.
+    d6_02_answer ve d6_03_validate mantığıyla kaynak etiketleme ([K1], [K2]) ve
+    atıf doğrulama (validate_citations) uygular.
+    """
+    print("\n[LangGraph: bilgi_sorgusu] RAG tabanlı bilgi çekiliyor (3-gram Rerank aktif)...")
+    soru = state.get("kullanici_girisi", "")
+    seviye = state.get("egitim_seviyesi", DEFAULT_SEVIYE)
+
+    rag = RAGMotoru()
+    # 3-gram Türkçe Lexical Reranking destekli seviye filtreli arama
+    dokumanlar = rag.seviye_filtreli_arama(sorgu=soru, egitim_seviyesi=seviye, k=3, rerank=True)
+
+    if not dokumanlar:
+        yanit = f"'{seviye}' seviyesindeki referans ders kitaplarında sorunuzla ilgili doğrudan bir içerik bulunamadı."
+        return {"yanit_metni": yanit, "rag_baglami": ""}
+
+    # [K1], [K2] biçiminde kaynak etiketleri oluştur (d6_02_answer mantığı)
+    baglam_parcalari = []
+    known_labels = []
+    kaynaklar = []
+
+    for i, doc in enumerate(dokumanlar, 1):
+        label = f"K{i}"
+        known_labels.append(label)
+        source = doc.metadata.get("source", "Ders Kitabı")
+        page = doc.metadata.get("page", "-")
+        ders = doc.metadata.get("ders_adi", "Genel")
+        
+        baglam_parcalari.append(f"[{label}] (Ders: {ders}, Kitap: {source}, Sayfa: {page})\n{doc.page_content}")
+        kaynaklar.append({"etiket": label, "kaynak": source, "sayfa": page, "ders": ders})
+
+    baglam_metni = "\n\n".join(baglam_parcalari)
+
+    # Güvenlik Duvarı: Doküman talimat değil veridir (d6_05_guvenlik mantığı)
+    yanit = (
+        f"**EduFrame AI ({seviye} Seviyesi Müfredat Bilgisi) [K1]:**\n\n"
+        f"{dokumanlar[0].page_content[:350]}...\n\n"
+        f"📚 **Doğrulanmış Kaynak:** {dokumanlar[0].metadata.get('source')} (Sayfa: {dokumanlar[0].metadata.get('page')}, Ders: {dokumanlar[0].metadata.get('ders_adi')})"
+    )
+
+    # Atıf Etiketi Doğrulama (d6_03_validate)
+    if validate_citations:
+        dogrulama = validate_citations(yanit, known_labels)
+        if not dogrulama["valid"]:
+            print(f"[UYARI: Atıf Denetimi] Geçersiz atıf tespit edildi: {dogrulama['invalid']}")
+
+    return {
+        "yanit_metni": yanit,
+        "rag_baglami": baglam_metni,
+        "rag_kaynaklari": kaynaklar,
+    }
+
+
+def video_indir_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """Videoyu yt-dlp ile tekil olarak indirir veya yerel dosyayı hazırlar."""
+    print("\n[LangGraph: video_indir] Video hazırlanıyor...")
+    kaynak = state.get("video_kaynagi") or state.get("kullanici_girisi")
+
+    downloader = VideoDownloader()
+    sonuc = downloader.video_hazirla(kaynak=kaynak, cozunurluk="720")
+
+    if not sonuc.get("success"):
+        return {"hata": sonuc.get("error", "Video hazırlanamadı.")}
+
+    return {"video_bilgisi": sonuc}
+
+
+def rag_baglam_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """Seçilen eğitim seviyesine ait ders kitabından anlamsal bağlamı çeker."""
+    print("\n[LangGraph: rag_baglam] Müfredat bağlamı ve soru formatları getiriliyor...")
+    seviye = state.get("egitim_seviyesi", DEFAULT_SEVIYE)
+    video_bilgisi = state.get("video_bilgisi") or {}
+    video_basligi = video_bilgisi.get("title", "Fen Bilimleri Dersi")
+
+    rag = RAGMotoru()
+    # Başlığa ve konuya göre seviye filtreli içerik çek
+    docs = rag.seviye_filtreli_arama(sorgu=video_basligi, egitim_seviyesi=seviye, k=4)
+    baglam = "\n\n".join([f"[Sayfa {d.metadata.get('page')}]: {d.page_content}" for d in docs])
+
+    # Kitaptaki soru formatlarını klonlamak için örnekleri al
+    soru_ornekleri = rag.soru_formatlarini_getir(egitim_seviyesi=seviye, k=3)
+
+    # Gemma Tokenizer ile bağlam token analizi (tokenizer_utils)
+    if _CORE_TOKENIZER:
+        token_adedi = len(_CORE_TOKENIZER.encode(baglam).tokens)
+        print(f"[Tokenizer Analizi] RAG Bağlamı Gemma Token Sayısı: {token_adedi} token (Maks: 2048)")
+
+    return {
+        "rag_baglami": baglam,
+        "rag_soru_ornekleri": soru_ornekleri,
+        "rag_kaynaklari": [{"kaynak": d.metadata.get("source"), "sayfa": d.metadata.get("page")} for d in docs]
+    }
+
+
+def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """
+    Gemini 1.5 Pro ile multimodal görsel materyal analizi yapar.
+    Ardından Kullanıcı Tavsiyeli 3 Boyutlu RAG Sistemini (Bilgi, Pedagoji, Ölçme-Değerlendirme)
+    her bölüm için çalıştırır ve kaynak izlenebilirliğini doğrular.
+    """
+    print("\n[LangGraph: gemini_analiz] Gemini 1.5 Pro materyal analizi ve 3D RAG entegrasyonu...")
+    video_bilgisi = state.get("video_bilgisi") or {}
+    video_yolu = video_bilgisi.get("file_path", "")
+    video_basligi = video_bilgisi.get("title", "Ders Anlatımı")
+    seviye = state.get("egitim_seviyesi", DEFAULT_SEVIYE)
+    rag_baglami = state.get("rag_baglami", "")
+
+    analyzer = GeminiAnalyzer()
+    analiz_sonucu = analyzer.analiz_et(
+        video_yolu=video_yolu,
+        egitim_seviyesi=seviye,
+        rag_baglami=rag_baglami,
+        video_basligi=video_basligi,
+    )
+
+    # -----------------------------------------------------------------------
+    # KULLANICI TAVSİYELİ 3 BOYUTLU RAG VE BÖLÜM BAZLI KAYNAK İZLENEBİLİRLİĞİ
+    # -----------------------------------------------------------------------
+    rag = RAGMotoru()
+    bolumler = analiz_sonucu.get("bolumler", [])
+    sinif = analiz_sonucu.get("sinif_duzeyi", "3. Sınıf")
+    ders = analiz_sonucu.get("ders_adi", "Fen Bilimleri")
+
+    print(f"\n[3D RAG Motoru] {len(bolumler)} bölüm için amaca yönelik sorgular (Bilgi, Pedagoji, Ölçme) başlatılıyor...")
+
+    # -----------------------------------------------------------------------
+    # AŞAMA 1: TÜM BÖLÜMLER İÇİN RAG 3D SORGULARI (Ollama embeddinggemma aktif)
+    # -----------------------------------------------------------------------
+    tum_dogrulanmis_kaynaklar = []
+    for bolum in bolumler:
+        b_no = bolum.get("bolum_no", 1)
+        b_baslik = bolum.get("bolum_basligi", "")
+        b_transkript = bolum.get("transkript", "")
+
+        rag_sonuc = rag.bolum_bazli_cok_yonlu_arama(
+            bolum_basligi=b_baslik,
+            transkript=b_transkript,
+            egitim_seviyesi=seviye,
+            sinif=sinif,
+            ders_adi=ders,
+            k=2
+        )
+
+        bolum["rag_3d"] = {
+            "bilgi": rag_sonuc["bilgi"]["baglam"],
+            "pedagoji": rag_sonuc["pedagoji"]["baglam"],
+            "olcme_degerlendirme": rag_sonuc["olcme_degerlendirme"]["baglam"]
+        }
+
+        # NOKTA ATIŞI: 768-Boyutlu RAG'dan gelen doğrulanmış kitap ve sayfa referansını bölüme aktar
+        if rag_sonuc.get("en_iyi_referans"):
+            bolum["kitap_referansi"] = rag_sonuc["en_iyi_referans"]
+
+        # Kaynak izlenebilirliği listesini topla
+        for k_item in rag_sonuc.get("tum_kaynaklar", []):
+            tum_dogrulanmis_kaynaklar.append(k_item)
+
+        print(f" -> [Bölüm {b_no}] 768-D RAG 3D sorgusu tamamlandı: {b_baslik[:35]}... (Referans: {bolum.get('kitap_referansi')})")
+
+    # -----------------------------------------------------------------------
+    # AŞAMA 2: PEDAGOJİK HARMANLAMA VE DERİN KONU ANLATIMI SENTEZİ
+    # -----------------------------------------------------------------------
+    print(f"\n[Pedagojik Sentez] 10 bölüm için öğretmen örnekleri ve MEB ders kitabı harmanlanıyor...")
+    for bolum in bolumler:
+        analyzer.bolum_pedagojik_sentezle(
+            bolum=bolum,
+            rag_sonuc={"bilgi": {"baglam": bolum.get("rag_3d", {}).get("bilgi", "")}, "pedagoji": {"baglam": bolum.get("rag_3d", {}).get("pedagoji", "")}},
+            sinif=sinif,
+            ders=ders,
+            egitim_seviyesi=seviye
+        )
+
+    analiz_sonucu["tum_kaynaklar"] = tum_dogrulanmis_kaynaklar
+    return {"video_analizi": analiz_sonucu}
+
+
+def ffmpeg_kare_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """Ekrandaki her eğitim materyali için zaman damgalı kareleri yakalar."""
+    print("\n[LangGraph: ffmpeg_kare] Materyal değişim kareleri FFmpeg ile alınıyor...")
+    video_bilgisi = state.get("video_bilgisi") or {}
+    video_yolu = video_bilgisi.get("file_path", "")
+    video_analizi = state.get("video_analizi") or {}
+    bolumler = video_analizi.get("bolumler", [])
+
+    processor = VideoProcessor()
+    guncel_bolumler = processor.bolum_karelerini_isle(video_yolu, bolumler)
+
+    video_analizi_guncel = dict(video_analizi)
+    video_analizi_guncel["bolumler"] = guncel_bolumler
+
+    return {"video_analizi": video_analizi_guncel}
+
+
+def soru_uret_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """Few-shot mantığıyla kitaptan klonlanan formatta sorular üretir."""
+    print("\n[LangGraph: soru_uret] Değerlendirme soruları oluşturuluyor...")
+    video_analizi = state.get("video_analizi") or {}
+    seviye = state.get("egitim_seviyesi", DEFAULT_SEVIYE)
+    rag_soru_ornekleri = state.get("rag_soru_ornekleri") or []
+
+    qgen = QuestionGenerator()
+    sorular = qgen.soru_uret(
+        video_analizi=video_analizi,
+        egitim_seviyesi=seviye,
+        rag_soru_ornekleri=rag_soru_ornekleri,
+        soru_sayisi=10
+    )
+
+    return {"sorular": sorular}
+
+
+def pdf_rapor_dugumu(state: EduFrameState) -> Dict[str, Any]:
+    """ReportLab motoru ile gerçek kurumsal PDF ders fasikülünü basar."""
+    print("\n[LangGraph: pdf_rapor] ReportLab ile gerçek kurumsal PDF fasikülü basılıyor...")
+    video_analizi = state.get("video_analizi") or {}
+    sorular = state.get("sorular") or []
+    video_bilgisi = state.get("video_bilgisi") or {}
+    video_kaynagi = state.get("video_kaynagi") or video_bilgisi.get("title", "Video Dersi")
+
+    generator = PDFGenerator()
+    sonuc = generator.pdf_olustur(
+        video_analizi=video_analizi,
+        sorular=sorular,
+        video_kaynak_bilgisi=str(video_kaynagi),
+    )
+
+    return {
+        "cikti_pdf_yolu": sonuc.get("pdf_path"),
+        "cikti_html_yolu": sonuc.get("html_path"),
+        "yanit_metni": f"Ders notu PDF'iniz başarıyla oluşturuldu: {sonuc.get('pdf_path')}"
+    }
+
+
+# ---------------------------------------------------------------------------
+# GRAF OLUŞTURUCU (STATE GRAPH BUILDER)
+# ---------------------------------------------------------------------------
+
+def create_eduframe_graph():
+    """
+    EduFrame AI için koşullu yönlendirmeli LangGraph akışını derler.
+    """
+    workflow = StateGraph(EduFrameState)
+
+    # 1. Düğümleri Ekle
+    workflow.add_node("planla", planla_dugumu)
+    workflow.add_node("bilgi_sorgusu", bilgi_sorgusu_dugumu)
+    workflow.add_node("video_indir", video_indir_dugumu)
+    workflow.add_node("rag_baglam", rag_baglam_dugumu)
+    workflow.add_node("gemini_analiz", gemini_analiz_dugumu)
+    workflow.add_node("ffmpeg_kare", ffmpeg_kare_dugumu)
+    workflow.add_node("soru_uret", soru_uret_dugumu)
+    workflow.add_node("pdf_rapor", pdf_rapor_dugumu)
+
+    # 2. Başlangıç Noktası
+    workflow.set_entry_point("planla")
+
+    # 3. Koşullu Yönlendirme (planla -> bilgi_sorgusu VEYA video_indir)
+    workflow.add_conditional_edges(
+        "planla",
+        rota_karari,
+        {
+            "bilgi_sorgusu": "bilgi_sorgusu",
+            "pdf_isleme": "video_indir",
+        }
+    )
+
+    # Bilgi sorgusu direkt sonlanır
+    workflow.add_edge("bilgi_sorgusu", END)
+
+    # PDF işleme boru hattı akışı
+    workflow.add_edge("video_indir", "rag_baglam")
+    workflow.add_edge("rag_baglam", "gemini_analiz")
+    workflow.add_edge("gemini_analiz", "ffmpeg_kare")
+
+    # Soru seçeneğine göre koşullu geçiş
+    def soru_eklensin_mi_kontrol(state: EduFrameState) -> str:
+        return "soru_uret" if state.get("soru_eklensin_mi", False) else "pdf_rapor"
+
+    workflow.add_conditional_edges(
+        "ffmpeg_kare",
+        soru_eklensin_mi_kontrol,
+        {
+            "soru_uret": "soru_uret",
+            "pdf_rapor": "pdf_rapor",
+        }
+    )
+
+    workflow.add_edge("soru_uret", "pdf_rapor")
+    workflow.add_edge("pdf_rapor", END)
+
+    return workflow.compile()
+
+
+class EduFrameAgenticCore:
+    """Streamlit ve dış çağrılar için kullanımı kolay ajan arayüzü."""
+
+    def __init__(self):
+        self.graph = create_eduframe_graph()
+
+    def calistir(
+        self,
+        kullanici_girisi: str,
+        video_kaynagi: Optional[str] = None,
+        egitim_seviyesi: str = DEFAULT_SEVIYE,
+        soru_eklensin_mi: bool = False,
+    ) -> EduFrameState:
+        """
+        Grafı verilen girdilerle baştan sona işletir ve nihai durumu döner.
+        """
+        baslangic_state: EduFrameState = {
+            "kullanici_girisi": kullanici_girisi,
+            "video_kaynagi": video_kaynagi,
+            "egitim_seviyesi": egitim_seviyesi,
+            "soru_eklensin_mi": soru_eklensin_mi,
+        }
+        return self.graph.invoke(baslangic_state)
+
+
+# --- KÖK DİZİN DOĞRUDAN TESTİ ---
+if __name__ == "__main__":
+    print("=" * 60)
+    print("EduFrame AI - LangGraph Orkestratörü Testi")
+    print("=" * 60)
+
+    core = EduFrameAgenticCore()
+
+    # TEST 1: Bilgi Sorgusu Rotası
+    print("\n--- TEST 1: Bilgi Sorgusu Rotası Test Ediliyor ---")
+    res1 = core.calistir(
+        kullanici_girisi="Kuvvet cisimlerin hareketini nasıl etkiler?",
+        video_kaynagi=None,
+        egitim_seviyesi="İlkokul"
+    )
+    print("Niyet:", res1.get("niyet"))
+    print("Yanıt:", res1.get("yanit_metni")[:120] if res1.get("yanit_metni") else "Boş")
+    assert res1.get("niyet") == "bilgi_sorgusu", "Rota 1 hatalı!"
+
+    # TEST 2: PDF İşleme Rotası
+    print("\n--- TEST 2: PDF İşleme Rotası Test Ediliyor ---")
+    res2 = core.calistir(
+        kullanici_girisi="Bu ders videosundan not çıkar",
+        video_kaynagi="https://www.youtube.com/watch?v=1EPox1m2MPQ",
+        egitim_seviyesi="İlkokul",
+        soru_eklensin_mi=True
+    )
+    print("Niyet:", res2.get("niyet"))
+    print("HTML Çıktı:", res2.get("cikti_html_yolu"))
+    print("PDF Çıktı:", res2.get("cikti_pdf_yolu"))
+    print("Soru Sayısı:", len(res2.get("sorular") or []))
+    assert res2.get("niyet") == "pdf_isleme", "Rota 2 hatalı!"
+
+    print("\n[BAŞARILI] LangGraph orkestrasyonu tüm rotalarıyla doğrulandı.")

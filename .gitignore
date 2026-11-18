@@ -1,0 +1,95 @@
+temp_medya
+reference_books
+
+
+# ==========================================
+# 1. Python cache ve derleme dosyalari
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ==========================================
+# 2. Sanal ortamlar
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+
+# ==========================================
+# 3. IDE dosyalari
+# ==========================================
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ==========================================
+# 4. Ortam degiskenleri ve gizli bilgiler
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# ==========================================
+# 5. ChromaDB veritabanlari
+# ==========================================
+data/chroma_db/
+data/chroma_test_db/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# ==========================================
+# 6. PDF ve referans kitaplar
+# ==========================================
+*.pdf
+data/reference_books/
+
+# ==========================================
+# 7. Gecici video ve medya dosyalari
+# ==========================================
+temp_medya/
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.mp3
+*.wav
+*.webm
+
+# ==========================================
+# 8. Model ve buyuk veri dosyalari
+# ==========================================
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# ==========================================
+# 9. Log ve gecici dosyalar
+# ==========================================
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# ==========================================
+# 10. Isletim sistemi dosyalari
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini

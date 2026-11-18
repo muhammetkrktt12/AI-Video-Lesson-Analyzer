@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ ders_basligi }} - EduFrame AI Ders Notu</title>
+    <style>
+        {{ css_icerigi }}
+    </style>
+</head>
+<body>
+
+    <!-- ÜST BİLGİ VE BAŞLIK -->
+    <div class="header-container">
+        <h1 class="brand-title">EduFrame AI</h1>
+        <h2 class="lesson-title">{{ ders_basligi }}</h2>
+        <div class="meta-badges">
+            <span class="badge badge-level">Seviye: {{ egitim_seviyesi }}</span>
+            <span class="badge badge-source">{{ video_kaynak_bilgisi }}</span>
+            <span class="badge badge-date">{{ olusturma_tarihi }}</span>
+        </div>
+    </div>
+
+    <!-- DERS GENEL ÖZETİ -->
+    {% if genel_ozet %}
+    <div class="summary-hero-box">
+        <div class="summary-hero-title">Ders Genel Kazanım ve Özeti</div>
+        <p style="margin: 0; font-size: 9.5pt; color: #334155;">{{ genel_ozet }}</p>
+    </div>
+    {% endif %}
+
+    <!-- KONU KARTLARI (3 KATMANLI SENTEZ VE EKRAN GÖRÜNTÜLERİ) -->
+    <div class="topics-wrapper">
+        {% for konu in konular %}
+        <div class="topic-card">
+            <div class="topic-header">
+                <span class="topic-title">{{ konu.konu_basligi }}</span>
+                <span class="time-pill">{{ konu.zaman_damgasi }}</span>
+            </div>
+            
+            <div class="topic-content">
+                <!-- FFmpeg Ekran Görüntüsü -->
+                {% if konu.ekran_goruntusu_yolu %}
+                <div class="screenshot-container">
+                    <img src="{{ konu.ekran_goruntusu_yolu }}" alt="{{ konu.konu_basligi }}" class="screenshot-img">
+                </div>
+                {% endif %}
+
+                <!-- 1. Katman: Ham Transkript -->
+                <div class="layer-box layer-transcript">
+                    <div class="layer-title-transcript">1. Birebir Konuşma Transkripti (Video Kaydı)</div>
+                    <div>"{{ konu.birebir_transkript }}"</div>
+                </div>
+
+                <!-- 2. Katman: Pedagojik Çeviri -->
+                <div class="layer-box layer-pedagogical">
+                    <div class="layer-title-pedagogical">2. Pedagojik Çeviri (Müfredat ve Seviye Uyarlaması)</div>
+                    <div>{{ konu.pedagojik_ceviri }}</div>
+                </div>
+
+                <!-- 3. Katman: Özet ve Anahtar Noktalar -->
+                <div class="layer-box layer-summary">
+                    <div class="layer-title-summary">3. Konu Özeti & Anahtar Noktalar</div>
+                    <div style="white-space: pre-line;">{{ konu.ozet }}</div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- DEĞERLENDİRME SORULARI BÖLÜMÜ (VARSA) -->
+    {% if sorular and sorular|length > 0 %}
+    <div class="questions-section">
+        <div class="section-header">Ders Değerlendirme Soruları (Ders Kitabı Formatında)</div>
+        
+        {% for s in sorular %}
+        <div class="question-card">
+            <div class="question-top">
+                <span class="question-num">Soru {{ loop.index }}</span>
+                <span class="question-badge">{{ s.tip }}</span>
+            </div>
+            <div class="question-text">{{ s.soru }}</div>
+
+            {% if s.secenekler and s.secenekler|length > 0 %}
+            <ul class="options-list">
+                {% for opt in s.secenekler %}
+                <li class="option-item">{{ opt }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <div class="answer-box">
+                <span class="answer-key">Doğru Cevap: {{ s.dogru_cevap }}</span> | 
+                <span>Açıklama: {{ s.aciklama }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</body>
+</html>
