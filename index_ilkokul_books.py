@@ -143,25 +143,26 @@ def verify_indexed_book_integrity(
     filename: str,
     expected_ids: Set[str],
     target_version: str = CURRENT_VERSION,
-    batch_size: int = 250
+    batch_size: int = 250,
+    expected_content_hashes: Dict[str, str] = None,
 ) -> Tuple[bool, List[str]]:
     """
     Belirtilen kitaba ait kayıtların ChromaDB'de eksiksiz, tutarlı metadata ve
     temizlenmiş pedagojik metin taşıdığını derinlemesine doğrular.
 
     Kontrol edilen kriterler:
-    1. ID tamlığı: Beklenen tüm ID'ler DB'de mevcut mu?
+    1. ID tamlığı: Beklenen tüm ID'ler DB'de mevcut mu? (Boş ID kümesi açık bir bütünlük hatasıdır).
     2. Versiyon tutarlılığı: Tüm parçalar metadata'da target_version ("v2") taşıyor mu ve ID'sinde f":{target_version}:" var mı?
     3. Metadata alanları: source, physical_page, unite, konu, referans, content_hash alanları dolu ve geçerli mi?
     4. Metin ve SHA-256 Hash bütünlüğü: Veritabanından okunan gerçek metnin SHA-256 hash'i (ilk 12 karakter)
-       metadata'daki content_hash ile birebir uyuşuyor mu?
+       metadata'daki content_hash ile birebir uyuşuyor mu? Varsa beklenen kaynak hash'leri ile eşleşiyor mu?
     5. Metin kalitesi: Parçalar pedagojik gürültü (nokta satırı / aşırı nokta kirliliği) barındırıyor mu veya boş mu?
 
     Returns:
         (is_valid: bool, issues: List[str])
     """
     if not expected_ids:
-        return True, []
+        return False, ["Beklenen chunk ID kümesi boş! Hiçbir parça üretilemedi veya doğrulanacak parça yok."]
 
     issues: List[str] = []
     try:
@@ -205,6 +206,13 @@ def verify_indexed_book_integrity(
                         issues.append(
                             f"Parça {cid}: content_hash uyuşmazlığı! Kayıtlı={c_hash}, Hesaplanan={calc_hash}"
                         )
+                    if expected_content_hashes is not None:
+                        if cid not in expected_content_hashes:
+                            issues.append(f"Parça {cid}: Beklenen content_hash sözlüğünde tanımlı değil")
+                        elif expected_content_hashes[cid] != c_hash:
+                            issues.append(
+                                f"Parça {cid}: Kaynak content_hash uyuşmazlığı! Beklenen={expected_content_hashes[cid]}, Kayıtlı={c_hash}"
+                            )
 
                 # 5. Metin kalitesi kontrolü (öğrenci nokta dizileri temizlenmiş olmalı)
                 if "....." in doc:
@@ -229,6 +237,7 @@ def can_cleanup_stale_chunks(
     missing_ids: Set[str],
     page_errors: List[Dict[str, Any]],
     integrity_ok: bool = True,
+    migration_allowed: bool = True,
 ) -> bool:
     """
     Eski sürüm kayıtlarının temizlenmesinin güvenli olup olmadığını belirler.
@@ -238,6 +247,7 @@ def can_cleanup_stale_chunks(
     3. Beklenen tüm ID'ler ChromaDB'de doğrulanmış olmalı (len(missing_ids) == 0).
     4. PDF metin çıkarma veya metadata hatası nedeniyle hiçbir sayfa atlanmamış olmalı (len(page_errors) == 0).
     5. Metin ve metadata bütünlüğü doğrulaması hatasız olmalı (integrity_ok).
+    6. Migrasyon izni açıkça verilmiş olmalı (migration_allowed).
     """
     if book_has_failure:
         return False
@@ -248,6 +258,8 @@ def can_cleanup_stale_chunks(
     if page_errors:
         return False
     if not integrity_ok:
+        return False
+    if not migration_allowed:
         return False
     return True
 
@@ -260,19 +272,40 @@ def main():
         default="",
         help="Yalnızca belirtilen tekil PDF kitabını indeksle (örn: ilkokul_fenbilimleri_3.sinif_2.kitap.pdf)"
     )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default="",
+        help="Hedef ChromaDB dizini (varsayılan: config.CHROMA_DB_DIR)"
+    )
+    parser.add_argument(
+        "--allow-migration",
+        action="store_true",
+        default=False,
+        help="v2 migrasyonuna ve eski kayıt temizliğine açık onay verir (güvenlik kilidi)"
+    )
     args = parser.parse_args()
 
     selected_books = [args.kitap] if args.kitap else TARGET_BOOKS
+    target_db_dir = Path(args.db_path).resolve() if args.db_path else CHROMA_DB_DIR.resolve()
+    is_live_db = (target_db_dir == CHROMA_DB_DIR.resolve())
+    migration_allowed = bool(args.allow_migration)
+
+    if is_live_db and migration_allowed:
+        print("\n[GÜVENLİK ENGELİ] Canlı veritabanı (data/chroma_db) üzerinde migrasyon provası çalıştırılamaz!")
+        print("                 Lütfen test veritabanı yolunu açıkça belirtin: --db-path data/chroma_db_v2_dryrun")
+        sys.exit(1)
 
     print("=" * 75)
     print("🎓 EduFrame AI - İlkokul (3. & 4. Sınıf) 768-D İndeksleme Motoru")
     print("=" * 75)
-    print(f" -> Hedef Vektör Veritabanı : {CHROMA_DB_DIR.resolve()}")
+    print(f" -> Hedef Vektör Veritabanı : {target_db_dir}")
     print(f" -> Hedef Koleksiyon        : {TARGET_COLLECTION}")
     print(f" -> Embedding Modeli        : Ollama ({EMBED_MODEL})")
     print(f" -> Parçalama Yapısı        : 1000 karakter / 150 örtüşme (overlap)")
     if args.kitap:
         print(f" -> Filtrelenen Tekil Kitap : {args.kitap}")
+    print(f" -> Migrasyon Temizlik İzni : {'AÇIK (--allow-migration)' if migration_allowed else 'KAPALI (Salt İndeksleme)'}")
     print("=" * 75)
 
     # 1. EMBEDDING BOYUTU DOĞRULAMA (768-D KONTROLÜ)
@@ -310,11 +343,11 @@ def main():
 
     # 3. CHROMADB VE MEVCUT CHUNK'LARI KONTROL ET (RESUMPTION / IDEMPOTENCY)
     print("\n[3/5] ChromaDB Başlatılıyor ve Mevcut Durum Taranıyor...")
-    CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
+    target_db_dir.mkdir(parents=True, exist_ok=True)
     store = Chroma(
         collection_name=TARGET_COLLECTION,
         embedding_function=emb,
-        persist_directory=str(CHROMA_DB_DIR)
+        persist_directory=str(target_db_dir)
     )
 
     existing_ids = get_existing_chunk_ids(store)
@@ -477,10 +510,15 @@ def main():
                       f"Kitap güncel kabul edilemez ve eski kayıt temizliği yapılamaz!")
                 continue
             if legacy_ids:
-                print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
-                      f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
-                cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
-                print(f" ✓ Eski sürüm/şemalı {cleaned} parça temizlendi ve kitap güncel duruma getirildi.")
+                if not migration_allowed:
+                    print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
+                          f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt var. "
+                          f"--allow-migration bayrağı verilmediği için temizlik ENGELLENDİ.")
+                else:
+                    print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
+                          f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
+                    cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
+                    print(f" ✓ Eski sürüm/şemalı {cleaned} parça temizlendi ve kitap güncel duruma getirildi.")
             else:
                 print(f" ✓ {kitap_adi} zaten tamamen güncel ({len(all_expected_ids)} parça DB'de doğrulandı, eski kayıt yok).")
             continue
@@ -541,6 +579,7 @@ def main():
             missing_ids=missing_ids,
             page_errors=page_errors,
             integrity_ok=integrity_ok,
+            migration_allowed=migration_allowed,
         )
 
         if safe_to_cleanup:
@@ -559,6 +598,8 @@ def main():
                 reasons.append(f"{len(page_errors)} sayfada metin çıkarma/metadata hatası")
             if not integrity_ok:
                 reasons.append(f"metin/metadata bütünlük hatası ({len(integrity_issues)} sorun)")
+            if not migration_allowed:
+                reasons.append("--allow-migration onayı verilmedi")
             print(f" [GÜVENLİK ENGELİ] {kitap_adi} için eski sürüm temizliği ENGELLENDİ! Gerekçeler: {', '.join(reasons)}.")
 
     total_elapsed = round(time.time() - t_start, 1)

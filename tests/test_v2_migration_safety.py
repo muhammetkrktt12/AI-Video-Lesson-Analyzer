@@ -305,6 +305,54 @@ class TestV2MigrationSafety(unittest.TestCase):
         self.assertFalse(ok_c)
         self.assertTrue(any("Temizlenmemiş nokta dizisi" in s for s in issues_c))
 
+        # Ek kontrol: expected_ids boş olduğunda otomatik başarı engellenir, bütünlük hatası verilir
+        ok_empty_set, issues_empty_set = verify_indexed_book_integrity(
+            mock_store, self.filename_a, set(), target_version="v2"
+        )
+        self.assertFalse(ok_empty_set)
+        self.assertTrue(any("Beklenen chunk ID kümesi boş" in s for s in issues_empty_set))
+        # Boş ID kümesinde eski sürüm temizliği ENGELLENİR
+        can_clean_empty = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=0,
+            expected_new_count=0,
+            missing_ids=set(),
+            page_errors=[],
+            integrity_ok=ok_empty_set,
+        )
+        self.assertFalse(can_clean_empty)
+
+        # Ek kontrol: expected_content_hashes kaynak kontrolü
+        mock_col.get.return_value = {
+            "ids": [valid_id],
+            "metadatas": [valid_meta],
+            "documents": [valid_doc],
+        }
+        ok_exp_match, _ = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2",
+            expected_content_hashes={valid_id: valid_hash}
+        )
+        self.assertTrue(ok_exp_match)
+
+        ok_exp_mismatch, issues_exp_mismatch = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2",
+            expected_content_hashes={valid_id: "mismatch9999"}
+        )
+        self.assertFalse(ok_exp_mismatch)
+        self.assertTrue(any("Kaynak content_hash uyuşmazlığı" in s for s in issues_exp_mismatch))
+
+        # Ek kontrol: migration_allowed=False temizliği engeller
+        can_clean_no_mig = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=1,
+            expected_new_count=1,
+            missing_ids=set(),
+            page_errors=[],
+            integrity_ok=True,
+            migration_allowed=False,
+        )
+        self.assertFalse(can_clean_no_mig)
+
     # -------------------------------------------------------------------------
     # TEST 7: Kitaplar Arası İzolasyon (Cross-Book Isolation)
     # -------------------------------------------------------------------------
