@@ -121,6 +121,7 @@ def check_book_legacy_records(
     """
     ChromaDB'de belirtilen kitaba ait eski ID şemalı (:pXXXX: olup :phys_ olmayan)
     veya eski sürüm (target_version belirtilmişse o etiketi içermeyen) kayıtları listeler.
+    ChromaDB sorgusunda hata oluşursa sessizce yutmaz, RuntimeError fırlatır.
     """
     try:
         col = store._collection
@@ -133,8 +134,8 @@ def check_book_legacy_records(
         ]
         return legacy_ids
     except Exception as e:
-        print(f"[UYARI] check_book_legacy_records hatası ({filename}): {e}")
-        return []
+        print(f"[HATA] check_book_legacy_records veritabanı sorgu hatası ({filename}): {e}")
+        raise RuntimeError(f"ChromaDB legacy kayıt taraması ({filename}) başarısız oldu: {e}") from e
 
 
 def verify_indexed_book_integrity(
@@ -152,7 +153,9 @@ def verify_indexed_book_integrity(
     1. ID tamlığı: Beklenen tüm ID'ler DB'de mevcut mu?
     2. Versiyon tutarlılığı: Tüm parçalar metadata'da target_version ("v2") taşıyor mu ve ID'sinde f":{target_version}:" var mı?
     3. Metadata alanları: source, physical_page, unite, konu, referans, content_hash alanları dolu ve geçerli mi?
-    4. Metin kalitesi: Parçalar pedagojik gürültü (nokta satırı / aşırı nokta kirliliği) barındırıyor mu?
+    4. Metin ve SHA-256 Hash bütünlüğü: Veritabanından okunan gerçek metnin SHA-256 hash'i (ilk 12 karakter)
+       metadata'daki content_hash ile birebir uyuşuyor mu?
+    5. Metin kalitesi: Parçalar pedagojik gürültü (nokta satırı / aşırı nokta kirliliği) barındırıyor mu veya boş mu?
 
     Returns:
         (is_valid: bool, issues: List[str])
@@ -187,16 +190,27 @@ def verify_indexed_book_integrity(
                 if not meta or "physical_page" not in meta or meta["physical_page"] <= 0:
                     issues.append(f"Parça {cid}: Geçersiz physical_page: {meta.get('physical_page') if meta else None}")
 
-                # 3. Content hash kontrolü
+                # 3. Metin varlık ve boşluk kontrolü
+                if doc is None or not isinstance(doc, str) or not doc.strip():
+                    issues.append(f"Parça {cid}: Belge metni boş veya eksik")
+                    continue
+
+                # 4. Content hash doğrulaması (SHA-256 yeniden hesaplama ve karşılaştırma)
                 c_hash = meta.get("content_hash", "") if meta else ""
                 if not c_hash:
                     issues.append(f"Parça {cid}: content_hash metadata alanı eksik")
+                else:
+                    calc_hash = hashlib.sha256(doc.encode("utf-8")).hexdigest()[:12]
+                    if calc_hash != c_hash:
+                        issues.append(
+                            f"Parça {cid}: content_hash uyuşmazlığı! Kayıtlı={c_hash}, Hesaplanan={calc_hash}"
+                        )
 
-                # 4. Metin kalitesi kontrolü (öğrenci nokta dizileri temizlenmiş olmalı)
-                if doc and "....." in doc:
+                # 5. Metin kalitesi kontrolü (öğrenci nokta dizileri temizlenmiş olmalı)
+                if "....." in doc:
                     issues.append(f"Parça {cid}: Temizlenmemiş nokta dizisi (.....) tespit edildi")
-                if not doc or len(doc.strip()) < 15:
-                    issues.append(f"Parça {cid}: Metin çok kısa (<15 karakter)")
+                if len(doc.strip()) < 15:
+                    issues.append(f"Parça {cid}: Metin çok kısa (<15 karakter): '{doc.strip()}'")
 
         missing_ids = expected_ids - found_ids
         if missing_ids:
@@ -456,7 +470,12 @@ def main():
                 continue
 
             # Eski şemalı veya eski sürümlü kayıtlar var mı kontrol et
-            legacy_ids = check_book_legacy_records(store, fname, target_version=CURRENT_VERSION)
+            try:
+                legacy_ids = check_book_legacy_records(store, fname, target_version=CURRENT_VERSION)
+            except Exception as leg_err:
+                print(f" [KRİTİK HATA] {kitap_adi} legacy kayıt kontrolü başarısız: {leg_err}. "
+                      f"Kitap güncel kabul edilemez ve eski kayıt temizliği yapılamaz!")
+                continue
             if legacy_ids:
                 print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
                       f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")

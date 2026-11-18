@@ -190,37 +190,100 @@ class TestV2MigrationSafety(unittest.TestCase):
         self.assertFalse(can_clean)
 
     # -------------------------------------------------------------------------
-    # TEST 6: Derinlemesine Metin ve Metadata Bütünlük Denetimi
+    # TEST 6: Derinlemesine Metin ve Metadata Bütünlük Denetimi (SHA-256 Hash Dahil)
     # -------------------------------------------------------------------------
     def test_06_verify_indexed_book_integrity(self):
-        """verify_indexed_book_integrity versiyon, kaynak, content_hash ve metin kalitesini doğrular."""
+        """verify_indexed_book_integrity SHA-256 content_hash, versiyon, kaynak ve metin kalitesini doğrular."""
         mock_store = MagicMock()
         mock_col = MagicMock()
         mock_store._collection = mock_col
 
         valid_id = f"{self.filename_a}:hash12345678:v2:phys_0015:c000"
+        valid_doc = "Dünya'mızın dış kısmını saran hava katmanına atmosfer denir."
+        valid_hash = hashlib.sha256(valid_doc.encode("utf-8")).hexdigest()[:12]
         valid_meta = {
             "source": self.filename_a,
             "physical_page": 15,
             "version": "v2",
-            "content_hash": "abcdef123456",
+            "content_hash": valid_hash,
             "unite": "1. Ünite",
             "konu": "Gezegenimizi Tanıyalım",
         }
-        valid_doc = "Dünya'mızın dış kısmını saran hava katmanına atmosfer denir."
 
-        # Senaryo A: Tamamen geçerli kayıt
+        # 1. Doğru hash -> doğrulama başarılı
         mock_col.get.return_value = {
             "ids": [valid_id],
             "metadatas": [valid_meta],
             "documents": [valid_doc],
         }
-
         ok, issues = verify_indexed_book_integrity(mock_store, self.filename_a, {valid_id}, target_version="v2")
         self.assertTrue(ok)
         self.assertEqual(len(issues), 0)
 
-        # Senaryo B: Eski versiyon metadata'sı ("v1") taşıyan kayıt
+        # 2. Yanlış hash -> doğrulama başarısız ve hata mesajında chunk ID ve uyuşmazlık açıklanır
+        bad_hash_meta = dict(valid_meta, content_hash="000000000000")
+        mock_col.get.return_value = {
+            "ids": [valid_id],
+            "metadatas": [bad_hash_meta],
+            "documents": [valid_doc],
+        }
+        ok_wrong_hash, issues_wrong_hash = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2"
+        )
+        self.assertFalse(ok_wrong_hash)
+        self.assertTrue(any(valid_id in s and "content_hash uyuşmazlığı" in s for s in issues_wrong_hash))
+        self.assertTrue(any("Kayıtlı=000000000000" in s and valid_hash in s for s in issues_wrong_hash))
+
+        # 3. Eksik hash -> doğrulama başarısız
+        missing_hash_meta = dict(valid_meta, content_hash="")
+        mock_col.get.return_value = {
+            "ids": [valid_id],
+            "metadatas": [missing_hash_meta],
+            "documents": [valid_doc],
+        }
+        ok_missing_hash, issues_missing_hash = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2"
+        )
+        self.assertFalse(ok_missing_hash)
+        self.assertTrue(any("content_hash metadata alanı eksik" in s for s in issues_missing_hash))
+
+        # 4. Veritabanındaki metin değiştirilmiş -> doğrulama başarısız
+        altered_doc = "Değiştirilmiş ve tahrif edilmiş sahte ders metni içeriği."
+        mock_col.get.return_value = {
+            "ids": [valid_id],
+            "metadatas": [valid_meta],  # Eski hash kaldı
+            "documents": [altered_doc],
+        }
+        ok_altered, issues_altered = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2"
+        )
+        self.assertFalse(ok_altered)
+        self.assertTrue(any("content_hash uyuşmazlığı" in s for s in issues_altered))
+
+        # 5. Hash uyuşmazlığında v1 kayıtları korunur (can_cleanup_stale_chunks engellenir)
+        can_clean_on_mismatch = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=1,
+            expected_new_count=1,
+            missing_ids=set(),
+            page_errors=[],
+            integrity_ok=ok_wrong_hash,
+        )
+        self.assertFalse(can_clean_on_mismatch)
+
+        # Ek kontrol: Boş / eksik metin reddedilir
+        mock_col.get.return_value = {
+            "ids": [valid_id],
+            "metadatas": [valid_meta],
+            "documents": [""],
+        }
+        ok_empty, issues_empty = verify_indexed_book_integrity(
+            mock_store, self.filename_a, {valid_id}, target_version="v2"
+        )
+        self.assertFalse(ok_empty)
+        self.assertTrue(any("Belge metni boş veya eksik" in s for s in issues_empty))
+
+        # Ek kontrol: Eski versiyon metadata'sı ("v1") taşıyan kayıt reddedilir
         bad_meta = dict(valid_meta, version="v1")
         mock_col.get.return_value = {
             "ids": [valid_id],
@@ -231,7 +294,7 @@ class TestV2MigrationSafety(unittest.TestCase):
         self.assertFalse(ok_b)
         self.assertTrue(any("Metadata versiyonu 'v1' != 'v2'" in s for s in issues_b))
 
-        # Senaryo C: Temizlenmemiş nokta satırı içeren kayıt
+        # Ek kontrol: Temizlenmemiş nokta satırı içeren kayıt reddedilir
         dirty_doc = "Soru 1: Güneş nedir? ....................................."
         mock_col.get.return_value = {
             "ids": [valid_id],
@@ -241,17 +304,6 @@ class TestV2MigrationSafety(unittest.TestCase):
         ok_c, issues_c = verify_indexed_book_integrity(mock_store, self.filename_a, {valid_id}, target_version="v2")
         self.assertFalse(ok_c)
         self.assertTrue(any("Temizlenmemiş nokta dizisi" in s for s in issues_c))
-
-        # Senaryo D: can_cleanup_stale_chunks bütünlük hatasında temizliği engeller
-        can_clean_c = can_cleanup_stale_chunks(
-            book_has_failure=False,
-            book_success=1,
-            expected_new_count=1,
-            missing_ids=set(),
-            page_errors=[],
-            integrity_ok=ok_c,
-        )
-        self.assertFalse(can_clean_c)
 
     # -------------------------------------------------------------------------
     # TEST 7: Kitaplar Arası İzolasyon (Cross-Book Isolation)
@@ -320,10 +372,12 @@ class TestV2MigrationSafety(unittest.TestCase):
         mock_store._collection = mock_col
 
         # Veritabanında şu an hem 502 adet v1 hem 374 adet yeni yazılmış v2 olsun
+        v2_doc_text = "Temiz pedagojik içerik metni fen bilimleri dersi."
+        v2_content_hash = hashlib.sha256(v2_doc_text.encode("utf-8")).hexdigest()[:12]
         all_ids = old_v1_ids + new_v2_ids
         all_metas = [{"source": self.filename_4, "file_hash": self.hash_4[:12], "version": "v1"} for _ in old_v1_ids] + \
-                    [{"source": self.filename_4, "file_hash": self.hash_4[:12], "version": "v2", "content_hash": "hash12345678", "physical_page": 1} for _ in new_v2_ids]
-        all_docs = ["Eski metin" for _ in old_v1_ids] + ["Temiz pedagojik içerik metni" for _ in new_v2_ids]
+                    [{"source": self.filename_4, "file_hash": self.hash_4[:12], "version": "v2", "content_hash": v2_content_hash, "physical_page": 1} for _ in new_v2_ids]
+        all_docs = ["Eski metin" for _ in old_v1_ids] + [v2_doc_text for _ in new_v2_ids]
 
         id_map = {cid: (m, d) for cid, m, d in zip(all_ids, all_metas, all_docs)}
 
@@ -422,17 +476,19 @@ class TestV2MigrationSafety(unittest.TestCase):
             f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_0002:c000",
         }
 
+        doc1 = "Bu birinci ders içeriğidir ve pedagojik olarak temizdir."
+        doc2 = "Bu ikinci ders içeriğidir ve pedagojik olarak temizdir."
+        hash1 = hashlib.sha256(doc1.encode("utf-8")).hexdigest()[:12]
+        hash2 = hashlib.sha256(doc2.encode("utf-8")).hexdigest()[:12]
+
         # DB'de tüm v2 parçaları mevcut
         mock_col.get.return_value = {
             "ids": list(v2_ids),
             "metadatas": [
-                {"source": self.filename_a, "version": "v2", "physical_page": 1, "content_hash": "hash12345678"},
-                {"source": self.filename_a, "version": "v2", "physical_page": 2, "content_hash": "hash87654321"},
+                {"source": self.filename_a, "version": "v2", "physical_page": 1, "content_hash": hash1},
+                {"source": self.filename_a, "version": "v2", "physical_page": 2, "content_hash": hash2},
             ],
-            "documents": [
-                "Bu birinci ders içeriğidir ve pedagojik olarak temizdir.",
-                "Bu ikinci ders içeriğidir ve pedagojik olarak temizdir."
-            ],
+            "documents": [doc1, doc2],
         }
 
         # 1. ID doğrulama
@@ -448,6 +504,54 @@ class TestV2MigrationSafety(unittest.TestCase):
         # 3. Eski kayıt kontrolü (hiç eski kayıt kalmamış olmalı)
         legacy = check_book_legacy_records(mock_store, self.filename_a, target_version="v2")
         self.assertEqual(len(legacy), 0)
+
+    # -------------------------------------------------------------------------
+    # TEST 11: check_book_legacy_records Hata Yönetimi
+    # -------------------------------------------------------------------------
+    def test_11_check_book_legacy_records_error_handling(self):
+        """check_book_legacy_records sorgu hatasında RuntimeError fırlatır, hatayı sessizce yutmaz."""
+        mock_store = MagicMock()
+        mock_col = MagicMock()
+        mock_store._collection = mock_col
+
+        # 1. Eski kayıt yok -> boş liste
+        mock_col.get.return_value = {
+            "ids": [
+                f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_0001:c000",
+                f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_0002:c000",
+            ]
+        }
+        res_empty = check_book_legacy_records(mock_store, self.filename_a, target_version="v2")
+        self.assertEqual(res_empty, [])
+
+        # 2. Eski v1 kayıtları var -> doğru ID listesi
+        mock_col.get.return_value = {
+            "ids": [
+                f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_0001:c000",
+                f"{self.filename_a}:{self.hash_a[:12]}:phys_0001:c000",  # v1
+            ]
+        }
+        res_v1 = check_book_legacy_records(mock_store, self.filename_a, target_version="v2")
+        self.assertEqual(res_v1, [f"{self.filename_a}:{self.hash_a[:12]}:phys_0001:c000"])
+
+        # 3. ChromaDB sorgusu hata veriyor -> RuntimeError (orijinal hata korunarak)
+        mock_col.get.side_effect = Exception("SQLite disk I/O error or lock")
+        with self.assertRaises(RuntimeError) as ctx:
+            check_book_legacy_records(mock_store, self.filename_a, target_version="v2")
+        self.assertIn("ChromaDB legacy kayıt taraması", str(ctx.exception))
+        self.assertIn("SQLite disk I/O error or lock", str(ctx.exception))
+
+        # 4. Sorgu hatası durumunda eski kayıt temizliği çalışmaz
+        cleanup_attempted = False
+        try:
+            legacy_ids = check_book_legacy_records(mock_store, self.filename_a, target_version="v2")
+            if legacy_ids:
+                cleanup_stale_chunks(mock_store, self.filename_a, self.hash_a, target_version="v2")
+                cleanup_attempted = True
+        except RuntimeError:
+            cleanup_attempted = False
+
+        self.assertFalse(cleanup_attempted)
 
 
 if __name__ == "__main__":
