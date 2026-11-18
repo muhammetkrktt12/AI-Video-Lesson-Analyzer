@@ -387,9 +387,7 @@ SADECE JSON döndür."""
                     self._ollama_devre_disi = True
                 return None
         except requests.exceptions.Timeout:
-            print(f" -> [UYARI] Ollama analiz isteği zaman aşımına uğradı ({tout}s).")
-            self._ollama_devre_disi = True
-            print(" -> [BİLGİ] Zincirleme zaman aşımını önlemek için bu oturumda sonraki Ollama çağrıları atlanacak.")
+            print(f" -> [UYARI] Ollama analiz isteği zaman aşımına uğradı ({tout}s). Genel analiz için yedek servise geçiliyor.")
         except requests.exceptions.ConnectionError as e:
             print(f" -> [UYARI] Ollama servisine bağlanılamadı ({self.ollama_url}): {e}")
             self._ollama_devre_disi = True
@@ -470,8 +468,25 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
         veri = self._ollama_ile_analiz_et(sistem_istemi)
         if veri:
             veri["uretim_kaynagi"] = "ollama"
-            for b in veri.get("bolumler", []):
-                b["kaynak_tipi"] = "ollama"
+            norm_bolumler = []
+            for idx, b in enumerate(veri.get("bolumler", []), 1):
+                if isinstance(b, dict):
+                    b["kaynak_tipi"] = "ollama"
+                    if "bolum_no" not in b:
+                        b["bolum_no"] = idx
+                    norm_bolumler.append(b)
+                elif isinstance(b, str):
+                    norm_bolumler.append({
+                        "bolum_no": idx,
+                        "bolum_basligi": b,
+                        "zaman_araligi": {"baslangic": f"0{idx-1}:00", "bitis": f"0{idx}:00", "kare_zamani": float(30 * idx)},
+                        "transkript": b,
+                        "duzenlenmis_anlatim": b,
+                        "onemli_kavramlar": [],
+                        "kitap_referansi": "MEB Ders Kitabı Referansı",
+                        "kaynak_tipi": "ollama"
+                    })
+            veri["bolumler"] = norm_bolumler
             return veri
 
         # 2. Aşama: Google Gemini API (Ollama ulaşılamazsa)
@@ -480,8 +495,25 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
             veri = self._gemini_ile_analiz_et(sistem_istemi)
             if veri:
                 veri["uretim_kaynagi"] = "gemini"
-                for b in veri.get("bolumler", []):
-                    b["kaynak_tipi"] = "gemini"
+                norm_bolumler = []
+                for idx, b in enumerate(veri.get("bolumler", []), 1):
+                    if isinstance(b, dict):
+                        b["kaynak_tipi"] = "gemini"
+                        if "bolum_no" not in b:
+                            b["bolum_no"] = idx
+                        norm_bolumler.append(b)
+                    elif isinstance(b, str):
+                        norm_bolumler.append({
+                            "bolum_no": idx,
+                            "bolum_basligi": b,
+                            "zaman_araligi": {"baslangic": f"0{idx-1}:00", "bitis": f"0{idx}:00", "kare_zamani": float(30 * idx)},
+                            "transkript": b,
+                            "duzenlenmis_anlatim": b,
+                            "onemli_kavramlar": [],
+                            "kitap_referansi": "MEB Ders Kitabı Referansı",
+                            "kaynak_tipi": "gemini"
+                        })
+                veri["bolumler"] = norm_bolumler
                 return veri
 
         # 3. Aşama: Güvenlik Ağı (Her ikisi de başarısız olursa)

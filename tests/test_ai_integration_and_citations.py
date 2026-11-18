@@ -495,19 +495,22 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         analyzer = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
         self.assertFalse(analyzer._ollama_devre_disi)
 
-        # İlk çağrı zaman aşımına uğrar ve devreyi açar (circuit breaker)
-        res1 = analyzer._ollama_ile_analiz_et("Test 1")
+        # İlk bölüm sentezi zaman aşımına uğrar ve devreyi açar (circuit breaker)
+        res1 = analyzer._ollama_tekil_sentez("Bölüm 1")
         self.assertIsNone(res1)
         self.assertTrue(analyzer._ollama_devre_disi)
         self.assertEqual(mock_post.call_count, 1)
 
-        # İkinci çağrı istek göndermeden derhal None döner
-        res2 = analyzer._ollama_ile_analiz_et("Test 2")
+        # İkinci bölüm sentezi istek göndermeden derhal None döner
+        res2 = analyzer._ollama_tekil_sentez("Bölüm 2")
         self.assertIsNone(res2)
         # mock_post çağrı sayısı artmamalı
         self.assertEqual(mock_post.call_count, 1)
 
-        # Bölüm sentezi de devre açıkken istek göndermez
+        # Analiz de devre açıkken istek göndermez
+        res_analiz = analyzer._ollama_ile_analiz_et("Analiz")
+        self.assertIsNone(res_analiz)
+        self.assertEqual(mock_post.call_count, 1)
         res_sec = analyzer._ollama_tekil_sentez("Bölüm 1")
         self.assertIsNone(res_sec)
         self.assertEqual(mock_post.call_count, 1)
