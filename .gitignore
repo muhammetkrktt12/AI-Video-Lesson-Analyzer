@@ -94,3 +94,5 @@ temp/
 .DS_Store
 Thumbs.db
 desktop.ini
+chroma_db_backup_pre_migration
+chroma_db_backup_903

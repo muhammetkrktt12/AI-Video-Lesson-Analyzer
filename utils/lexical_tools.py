@@ -57,25 +57,69 @@ def lexical_score(query: str, text: str) -> float:
     return lexical_similarity(query, text)
 
 
+def compute_noise_penalty(
+    content: str,
+    dot_threshold: float = 0.15,
+    min_penalty_floor: float = 0.15
+) -> float:
+    """
+    Metindeki gürültü (boşluk doldurma noktaları, aşırı noktalama) oranına göre
+    yumuşak ve kademeli bir ceza katsayısı (min_penalty_floor - 1.0) hesaplar.
+    dot_threshold (varsayılan 0.15) altındaki temiz metinlerde ceza uygulanmaz (katsayı 1.0).
+    """
+    if not content:
+        return min_penalty_floor
+
+    c_len = len(content)
+    dots = content.count('.')
+    dot_ratio = dots / c_len
+
+    if dot_ratio <= dot_threshold:
+        return 1.0
+
+    # Eşik üzerindeki gürültü için sürekli azalan kademeli ceza
+    excess = dot_ratio - dot_threshold
+    penalty = 1.0 - (excess / (1.0 - dot_threshold)) * 1.5
+    return max(min_penalty_floor, min(1.0, penalty))
+
+
+def clean_snippet_preview(text: str, max_chars: int = 150) -> str:
+    """
+    Arayüz ve loglama için özet kesiti üretirken baştaki nokta dizilerini ve boşlukları budar.
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r'^[\s\.\_\-\–\—\•\*]+', '', text)
+    cleaned = cleaned.replace('\n', ' ')
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if len(cleaned) > max_chars:
+        return cleaned[:max_chars] + "..."
+    return cleaned
+
+
 def rerank_candidates(
     soru: str,
     adaylar: List[Any],
     lexical_agirlik: float = 0.4,
-    top_n: int = 3
+    top_n: int = 3,
+    apply_noise_penalty: bool = True,
+    dot_threshold: float = 0.15
 ) -> List[Tuple[Any, float]]:
     """
     Aday dokümanları hem ilk anlamsal sıra pozisyonu (1/sira) hem de Türkçe 3-gram
-    benzerlik puanını harmanlayan hibrit skorla yeniden sıralar.
+    benzerlik puanını harmanlayan ve gürültü cezası (noise penalty) uygulayan hibrit skorla yeniden sıralar.
     
     Formül:
         anlamsal_puan = 1.0 / sira
         lexical_puan = lexical_similarity(soru, doc.page_content)
-        toplam_puan = (1.0 - lexical_agirlik) * anlamsal_puan + lexical_agirlik * lexical_puan
+        toplam_puan = ((1.0 - lexical_agirlik) * anlamsal_puan + lexical_agirlik * lexical_puan) * noise_penalty
 
     :param soru: Kullanıcı veya RAG sorgusu
     :param adaylar: LangChain Document nesneleri veya metin nesneleri listesi
     :param lexical_agirlik: 0.0 ile 1.0 arasında lexical ağırlık katsayısı (Varsayılan 0.4)
     :param top_n: Döndürülecek en yüksek puanlı aday sayısı
+    :param apply_noise_penalty: Gürültülü/nokta ağırlıklı parçalara ceza uygulansın mı (Varsayılan True)
+    :param dot_threshold: Ceza başlangıç nokta oranı eşiği (Varsayılan 0.15)
     :return: [(belge, toplam_skor), ...] listesi
     """
     if not adaylar:
@@ -90,6 +134,11 @@ def rerank_candidates(
         content = getattr(belge, "page_content", str(belge))
         lexical_puan = lexical_similarity(soru, content)
         toplam = ((1.0 - lexical_agirlik) * anlamsal_sira_puani + lexical_agirlik * lexical_puan)
+
+        if apply_noise_penalty:
+            penalty = compute_noise_penalty(content, dot_threshold=dot_threshold)
+            toplam *= penalty
+
         puanli.append((belge, toplam))
 
     puanli.sort(key=lambda item: -item[1])

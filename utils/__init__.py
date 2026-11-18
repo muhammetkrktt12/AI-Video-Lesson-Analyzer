@@ -13,6 +13,8 @@ from utils.lexical_tools import (
     rerank_candidates,
     validate_citations,
     hit_at_k,
+    compute_noise_penalty,
+    clean_snippet_preview,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "rerank_candidates",
     "validate_citations",
     "hit_at_k",
+    "compute_noise_penalty",
+    "clean_snippet_preview",
 ]
