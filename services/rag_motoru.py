@@ -58,7 +58,12 @@ try:
 except ImportError:
     ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR = ROOT / "data"
-    CHROMA_DB_DIR = DATA_DIR / "chroma_db"
+    _custom_db = os.getenv("EDUFRAME_CHROMA_DB_DIR")
+    if _custom_db:
+        _cp = Path(_custom_db)
+        CHROMA_DB_DIR = _cp if _cp.is_absolute() else (ROOT / _cp)
+    else:
+        CHROMA_DB_DIR = DATA_DIR / "chroma_db"
     REFERENCE_BOOKS_DIR = DATA_DIR / "reference_books"
     COLLECTION = "eduframe_rag_v1"
     EGITIM_SEVIYELERI = ["İlkokul", "Ortaokul", "Lise", "Üniversite"]
@@ -83,11 +88,13 @@ class GuvenliEmbeddingMotoru(Embeddings):
         base_url: str = OLLAMA_URL,
         koleksiyon_adi: Optional[str] = None,
         allow_fallback: bool = False,
+        db_dizini: Optional[Path] = None,
     ):
         self.model_adi = model_adi
         self.base_url = base_url
         self.koleksiyon_adi = koleksiyon_adi or COLLECTION
         self.allow_fallback = allow_fallback
+        self.db_dizini = Path(db_dizini) if db_dizini else CHROMA_DB_DIR
         self._ollama_client = None
         self._ollama_kullanilabilir = None
         self._hedef_boyut = self._koleksiyon_boyutu_al()
@@ -96,7 +103,7 @@ class GuvenliEmbeddingMotoru(Embeddings):
         """Mevcut Chroma koleksiyonunun beklediği embedding vektör boyutunu tespit eder."""
         try:
             import chromadb
-            client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+            client = chromadb.PersistentClient(path=str(self.db_dizini))
             col = client.get_collection(self.koleksiyon_adi)
             sample = col.get(limit=1, include=['embeddings'])
             if sample and sample.get('embeddings') is not None and len(sample['embeddings']) > 0:
@@ -202,7 +209,9 @@ class RAGMotoru:
         self.koleksiyon_adi = koleksiyon_adi
         self.allow_fallback = allow_fallback
         self.embedding = embedding_motoru or GuvenliEmbeddingMotoru(
-            koleksiyon_adi=self.koleksiyon_adi, allow_fallback=allow_fallback
+            koleksiyon_adi=self.koleksiyon_adi,
+            allow_fallback=allow_fallback,
+            db_dizini=self.db_dizini,
         )
         self._vector_store: Optional[Chroma] = None
 

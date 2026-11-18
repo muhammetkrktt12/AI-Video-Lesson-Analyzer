@@ -33,7 +33,14 @@ ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from config import CHROMA_DB_DIR, REFERENCE_BOOKS_DIR, OLLAMA_URL, EMBED_MODEL
+from config import (
+    CHROMA_DB_DIR,
+    CHROMA_DB_V1_DIR,
+    CHROMA_DB_V2_DIR,
+    REFERENCE_BOOKS_DIR,
+    OLLAMA_URL,
+    EMBED_MODEL,
+)
 from index_core import (
     calculate_file_hash,
     generate_chunk_id,
@@ -294,13 +301,20 @@ def main():
 
     selected_books = [args.kitap] if args.kitap else TARGET_BOOKS
     target_db_dir = Path(args.db_path).resolve() if args.db_path else CHROMA_DB_DIR.resolve()
-    is_live_db = (str(target_db_dir).lower() == str(CHROMA_DB_DIR.resolve()).lower())
+
+    # Koruma altındaki üretim veritabanı yolları (v1, v2 ve aktif CHROMA_DB_DIR)
+    protected_production_dirs = {
+        str(CHROMA_DB_DIR.resolve()).lower(),
+        str(CHROMA_DB_V1_DIR.resolve()).lower(),
+        str(CHROMA_DB_V2_DIR.resolve()).lower(),
+    }
+    is_live_db = (str(target_db_dir).lower() in protected_production_dirs)
     migration_allowed = bool(args.allow_migration)
     write_allowed = migration_allowed or bool(args.allow_write)
 
     if is_live_db and (migration_allowed or write_allowed):
-        print("\n[GÜVENLİK ENGELİ] Canlı veritabanı (data/chroma_db, 903 kayıt) doğrudan değiştirilemez!")
-        print("                 Canlı veritabanı üzerinde doğrudan yazma veya silme işlemi yapılamaz.")
+        print(f"\n[GÜVENLİK ENGELİ] Üretim veritabanı ({target_db_dir.name}) doğrudan değiştirilemez!")
+        print("                 Üretim veritabanı üzerinde doğrudan yazma veya silme işlemi yapılamaz.")
         print("                 Lütfen test veritabanı yolunu açıkça belirtin: --db-path data/chroma_db_v2_dryrun")
         sys.exit(1)
 
@@ -316,7 +330,7 @@ def main():
     print(f" -> Yazma İzni              : {'AÇIK' if write_allowed else 'KAPALI (Salt Önizleme / Dry-Run)'}")
     print(f" -> Migrasyon Temizlik İzni : {'AÇIK (--allow-migration)' if migration_allowed else 'KAPALI (Eski Kayıt Silme Engelli)'}")
     if is_live_db:
-        print(" -> Canlı DB Güvenlik Modu : AKTİF (data/chroma_db salt-okunur modda korunuyor)")
+        print(f" -> Üretim DB Güvenlik Modu : AKTİF ({target_db_dir.name} salt-okunur modda korunuyor)")
     print("=" * 75)
 
     # 1. EMBEDDING BOYUTU DOĞRULAMA (768-D KONTROLÜ)
@@ -525,7 +539,7 @@ def main():
                     print(f" [GÜVENLİK KİLİDİ] {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
                           f"ancak --allow-migration bayrağı verilmediği için {len(legacy_ids)} eski sürüm/şemalı kayıt SİLİNMEDİ.")
                 elif is_live_db:
-                    print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Canlı veritabanı (data/chroma_db) üzerinde eski kayıt temizliği ENGELLENDİ.")
+                    print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Üretim veritabanı ({target_db_dir.name}) üzerinde eski kayıt temizliği ENGELLENDİ.")
                 else:
                     print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
                           f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
@@ -608,7 +622,7 @@ def main():
         if not migration_allowed:
             print(f" [GÜVENLİK KİLİDİ] {kitap_adi}: --allow-migration onayı verilmediği için eski kayıt silme ENGELLENDİ.")
         elif is_live_db:
-            print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Canlı veritabanı (data/chroma_db) üzerinde eski kayıt silme ENGELLENDİ.")
+            print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Üretim veritabanı ({target_db_dir.name}) üzerinde eski kayıt silme ENGELLENDİ.")
         elif safe_to_cleanup:
             cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
             if cleaned > 0:

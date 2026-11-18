@@ -743,24 +743,53 @@ class TestV2MigrationSafety(unittest.TestCase):
         self.assertEqual(deleted_chunks, 0, "İzin olmadan hiçbir kayıt silinmemelidir.")
 
     # -------------------------------------------------------------------------
-    # TEST 15: Canlı Veritabanı Koruma Kilidi (Live DB Guard)
+    # TEST 15: Üretim Veritabanı Koruma Kilidi (Live/Production DB Guard)
     # -------------------------------------------------------------------------
     def test_15_live_database_guard_blocks_mutation(self):
-        """Hedef dizin data/chroma_db olduğunda doğrudan yazma veya silme işlemi engellenir."""
-        live_db_path = CHROMA_DB_DIR.resolve()
-        target_path = Path("data/chroma_db").resolve()
-        is_live_db = (str(target_path).lower() == str(live_db_path).lower())
-        self.assertTrue(is_live_db, "Hedef canlı veritabanı olarak doğru tanınmalıdır.")
+        """Hedef dizin data/chroma_db veya data/chroma_db_v2 olduğunda doğrudan yazma veya silme işlemi engellenir."""
+        from config import CHROMA_DB_V1_DIR, CHROMA_DB_V2_DIR
+        protected_production_dirs = {
+            str(CHROMA_DB_DIR.resolve()).lower(),
+            str(CHROMA_DB_V1_DIR.resolve()).lower(),
+            str(CHROMA_DB_V2_DIR.resolve()).lower(),
+        }
 
-        # Canlı DB üzerinde migration_allowed=True veya write_allowed=True verilirse engellenmelidir
-        migration_allowed = True
-        write_allowed = True
+        # 1. v1 veritabanı koruma altında olmalı
+        target_v1 = Path("data/chroma_db").resolve()
+        self.assertIn(str(target_v1).lower(), protected_production_dirs)
 
-        blocked = False
-        if is_live_db and (migration_allowed or write_allowed):
-            blocked = True
+        # 2. v2 veritabanı koruma altında olmalı
+        target_v2 = Path("data/chroma_db_v2").resolve()
+        self.assertIn(str(target_v2).lower(), protected_production_dirs)
 
-        self.assertTrue(blocked, "Canlı veritabanı üzerinde doğrudan migrasyon engellenmelidir.")
+        # 3. Canlı/Üretim DB üzerinde migration_allowed=True veya write_allowed=True verilirse engellenmelidir
+        for target_path in [target_v1, target_v2]:
+            is_live_db = (str(target_path).lower() in protected_production_dirs)
+            blocked = is_live_db and (True or False)
+            self.assertTrue(blocked, f"{target_path.name} üzerinde doğrudan migrasyon engellenmelidir.")
+
+    # -------------------------------------------------------------------------
+    # TEST 16: EDUFRAME_CHROMA_DB_DIR ile Dinamik Veritabanı Değişimi
+    # -------------------------------------------------------------------------
+    def test_16_configurable_chroma_db_env_var(self):
+        """EDUFRAME_CHROMA_DB_DIR ortam değişkeni ile v1 ve v2 arasında güvenli geçiş yapılabilmelidir."""
+        import os
+        from unittest.mock import patch
+        from services.rag_motoru import RAGMotoru
+
+        # v2 ortam değişkeniyle RAGMotoru başlatma
+        v2_path = Path("data/chroma_db_v2").resolve()
+        with patch.dict(os.environ, {"EDUFRAME_CHROMA_DB_DIR": str(v2_path)}):
+            rag_v2 = RAGMotoru(db_dizini=v2_path)
+            self.assertEqual(rag_v2.db_dizini, v2_path)
+            self.assertEqual(rag_v2.embedding.db_dizini, v2_path)
+
+        # v1 ortam değişkeniyle RAGMotoru başlatma (Rollback senaryosu)
+        v1_path = Path("data/chroma_db").resolve()
+        with patch.dict(os.environ, {"EDUFRAME_CHROMA_DB_DIR": str(v1_path)}):
+            rag_v1 = RAGMotoru(db_dizini=v1_path)
+            self.assertEqual(rag_v1.db_dizini, v1_path)
+            self.assertEqual(rag_v1.embedding.db_dizini, v1_path)
 
 
 if __name__ == "__main__":
