@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "fixture_adi": "3. Sınıf Fen Bilimleri - Elektrikli Araç Gereçler Sabit Test Verisi",
+    "fixture_adi": "3. Sınıf Fen Bilimleri - Elektrikli Araç Gereçler Pedagojik Simülasyon Test Verisi",
     "video_id": "J9_yr257Jog",
     "video_basligi": "Elektrikli Araç Gereçler 📗 3. Sınıf Fen #2026",
     "ders_adi": "Fen Bilimleri",
@@ -8,10 +8,11 @@
     "sinif_duzeyi": "3. Sınıf",
     "toplam_sure_saniye": 610.0,
     "kaynak_video_dosyasi": "temp_medya/videos/yt_J9_yr257Jog.mp4",
+    "veri_kaynagi_turu": "pedagojik_simulasyon_verisi",
     "referans_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
     "referans_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
     "olusturma_tarihi": "2026-11-18",
-    "aciklama": "Bu fixture, video analizi ve kare seçimi boru hattını dondurarak RAG sorgusu ve doğrulama testlerinin bağımsız ve deterministik çalışmasını sağlar."
+    "aciklama": "Bu test verisi, canlı video analiz çalışmasından değil; GeminiAnalyzer._orijinal_materyal_simulasyonu simülasyon çıktısından türetilmiştir. RAG ve MEB kitap eşleştirme testleri için deterministik ve kontrollü bir test zemini sağlar."
   },
   "bolumler": [
     {
@@ -44,7 +45,7 @@
         "bitis": "03:00",
         "kare_zamani": 120.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_03_0072s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_03_0120s.jpg",
       "transkript": "Ekranda gördüğümüz araçların ortak özelliği nedir bir düşünelim: Ütü elbiselerimizin kırışıklıklarını açar. Buzdolabı besinlerimizin bozulmamasını sağlar. Çamaşır makinesi kirli kıyafetlerimizi yıkar. Bilgisayarı araştırma yapmak, bilgi depolamak ve internete girmek için kullanırız. Klima sıcak havalarda serinletir, soğukta ısıtır. Elektrikli süpürge ise evdeki toz ve kirleri temizler. Hepsinin yaptığı iş farklı olsa da en temel ortak özellikleri elektrik enerjisiyle çalışmalarıdır!"
     },
     {
@@ -55,7 +56,7 @@
         "bitis": "04:00",
         "kare_zamani": 270.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_04_0127s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_04_0270s.jpg",
       "transkript": "Elektrik santrallerde üretilen bir enerjidir. Elektrik hayatımızı oldukça kolaylaştırır. Örneğin banyodan sonra saçımızı kurutmak için fön makinesi, yemek yapmak için fırın gibi birçok elektrikli araç gereç kullanırız. Elektriği ulaşım, ısıtma, aydınlatma, haberleşme, temizlik, sağlık, eğitim ve ev işlerinde kesintisiz olarak kullanmaktayız."
     },
     {
@@ -66,7 +67,7 @@
         "bitis": "04:50",
         "kare_zamani": 315.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_05_0206s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_05_0315s.jpg",
       "transkript": "Şimdi ekrandaki temel atma törenli sorumuzu birlikte çözelim: Görsellerde ampul, elektrikli süpürge ve tost makinesi var. Soru bize yemek yapma amaçlı kullanılanı soruyor. Ampul aydınlatma yapar, süpürge temizlik yapar. Tost makinesi ise elektrik enerjisini ısıya çevirerek lezzetli tostlar ve yiyecekler hazırlamamızı sağlar. Doğru yanıtımız C seçeneğidir!"
     },
     {
@@ -77,7 +78,7 @@
         "bitis": "05:40",
         "kare_zamani": 360.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_06_0268s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_06_0360s.jpg",
       "transkript": "Elektrikli araçları kullanım amaçlarına göre gruplandırıyoruz: İlk grubumuz 'Isınma ve Soğutma'. Evlerimizi ısıtan elektrikli sobalar, radyatörler, kombiler ve serinleten klimalar bu gruptadır. İkinci grubumuz ise 'Aydınlatma'. Karanlıkta etrafı görmemizi sağlayan ampuller, el fenerleri, masa lambaları, sokak lambaları ve arabalarımızın farları aydınlatma araçlarıdır."
     },
     {
@@ -88,7 +89,7 @@
         "bitis": "06:40",
         "kare_zamani": 410.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_07_0336s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_07_0410s.jpg",
       "transkript": "Gelelim ikinci sorumuza: Mutfaktaki fırın elektrik enerjisini ısıya dönüştürür ve yemek pişirir. Elektrikli süpürge ise motoruyla hava akımı oluşturup yerdeki tozları çeker yani temizlik yapar. Hangisinin kullanım alanı farklıdır sorusunda fırın yemek yapma, süpürge temizlik alanına aittir."
     },
     {
@@ -99,7 +100,7 @@
         "bitis": "07:30",
         "kare_zamani": 475.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_08_0372s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_08_0475s.jpg",
       "transkript": "Sırada temizlik ve haberleşme amaçlı araçlarımız var: Sol tarafta çamaşır makinesi kıyafetlerimizi, bulaşık makinesi mutfak eşyalarımızı, elektrikli süpürge ise halı ve zeminleri temizler. Sağ tarafta ise uzaktaki sevdiklerimizle haberleşmemizi ve dünyayı öğrenmemizi sağlayan akıllı telefon, tablet, televizyon ve radyo yer alır."
     },
     {
@@ -110,7 +111,7 @@
         "bitis": "08:30",
         "kare_zamani": 510.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_09_0415s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_09_0510s.jpg",
       "transkript": "Elektriğin iki modern kullanım alanı daha var: Ulaşım ve Eğitim! Üstte ulaşım araçlarımızı görüyoruz: Raylar üzerinde hızla giden yüksek hızlı trenler, metrolar ve çevreye zarar vermeyen elektrikli arabamız TOGG. Altta ise okullarımızdaki eğitim araçları: Akıllı tahta, projeksiyon cihazı, yazıcı ve fotokopi makineleri derslerimizi daha verimli işlememizi sağlar."
     },
     {
@@ -121,15 +122,16 @@
         "bitis": "09:45",
         "kare_zamani": 550.0
       },
-      "kare_dosyasi": "temp_medya/frames/bolum_10_0480s.jpg",
+      "kare_dosyasi": "temp_medya/frames/bolum_10_0550s.jpg",
       "transkript": "Bu dersimizde elektrikli araç gereçleri ve onların kullanım alanlarını öğrendik. Hayatımızın her anında elektrik enerjisiyle çalışan bir alet bulunur. Bir sonraki dersimizde elektrik kaynaklarını daha detaylı inceleyeceğiz. Hepinize iyi çalışmalar!"
     }
   ],
-  "ground_truth_degerlendirme_kumesi": [
+  "transkript_dogrulama_kumesi": [
     {
       "id": "GT-01",
       "bolum_no": 3,
-      "transkript_iddiasi": "Buzdolabı besinleri bozulmadan saklar, çamaşır makinesi yıkar, ütü elbiseleri düzeltir.",
+      "transkript_cumlesi": "Ütü elbiselerimizin kırışıklıklarını açar. Buzdolabı besinlerimizin bozulmamasını sağlar. Çamaşır makinesi kirli kıyafetlerimizi yıkar.",
+      "cikarilan_iddia": "Buzdolabı besinleri korur, çamaşır makinesi yıkar, ütü elbiseleri düzeltir.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -141,7 +143,8 @@
     {
       "id": "GT-02",
       "bolum_no": 4,
-      "transkript_iddiasi": "Banyodan sonra saçlarımızı kurutmak için saç kurutma makinesi kullanırız.",
+      "transkript_cumlesi": "Örneğin banyodan sonra saçımızı kurutmak için fön makinesi, yemek yapmak için fırın gibi birçok elektrikli araç gereç kullanırız.",
+      "cikarilan_iddia": "Saç kurutmak için saç kurutma makinesi (fön makinesi) kullanılır.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -153,7 +156,8 @@
     {
       "id": "GT-03",
       "bolum_no": 6,
-      "transkript_iddiasi": "Isınma için elektrik sobası ve elektrikli radyatör kullanılır.",
+      "transkript_cumlesi": "Evlerimizi ısıtan elektrikli sobalar, radyatörler, kombiler ve serinleten klimalar bu gruptadır.",
+      "cikarilan_iddia": "Isınma için elektrik sobası ve elektrikli radyatör kullanılır.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -165,7 +169,8 @@
     {
       "id": "GT-04",
       "bolum_no": 6,
-      "transkript_iddiasi": "Aydınlatma için sokak lambası, el feneri ve otomobil farı elektrik enerjisiyle ışık sağlar.",
+      "transkript_cumlesi": "Karanlıkta etrafı görmemizi sağlayan ampuller, el fenerleri, masa lambaları, sokak lambaları ve arabalarımızın farları aydınlatma araçlarıdır.",
+      "cikarilan_iddia": "Aydınlatma için sokak lambası, el feneri ve otomobil farı ışık sağlar.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -177,7 +182,8 @@
     {
       "id": "GT-05",
       "bolum_no": 8,
-      "transkript_iddiasi": "İletişim ve haberleşme için telefon, televizyon, radyo ve bilgisayar kullanılır.",
+      "transkript_cumlesi": "uzaktaki sevdiklerimizle haberleşmemizi ve dünyayı öğrenmemizi sağlayan akıllı telefon, tablet, televizyon ve radyo yer alır.",
+      "cikarilan_iddia": "İletişim ve haberleşme için telefon, televizyon, radyo ve bilgisayar kullanılır.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -189,7 +195,8 @@
     {
       "id": "GT-06",
       "bolum_no": 9,
-      "transkript_iddiasi": "Eğitimde akıllı tahta ve yazıcı gibi araç gereçler kullanılır.",
+      "transkript_cumlesi": "Altta ise okullarımızdaki eğitim araçları: Akıllı tahta, projeksiyon cihazı, yazıcı ve fotokopi makineleri derslerimizi daha verimli işlememizi sağlar.",
+      "cikarilan_iddia": "Eğitimde akıllı tahta ve yazıcı gibi araç gereçler kullanılır.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -201,7 +208,8 @@
     {
       "id": "GT-07",
       "bolum_no": 4,
-      "transkript_iddiasi": "Elektrik enerjisi elektrik santrallerinde üretilir.",
+      "transkript_cumlesi": "Elektrik santrallerde üretilen bir enerjidir.",
+      "cikarilan_iddia": "Elektrik enerjisi elektrik santrallerinde üretilir.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Meraklı Sayfa",
@@ -211,45 +219,10 @@
       "dogrulama_durumu": "DESTEKLENIYOR"
     },
     {
-      "id": "GT-08",
-      "bolum_no": 3,
-      "transkript_iddiasi": "Piknik tüpü elektrikli değildir, su ısıtıcısı ise suyu elektrikle ısıtır.",
-      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
-      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
-      "beklenen_konu": "Elektrikli Araç Gereç",
-      "beklenen_basili_sayfa": 48,
-      "beklenen_fiziksel_sayfa": 49,
-      "gercek_kitap_alintisi": "Örneğin suyu bir kap yardımıyla piknik tüpünde ısıtabiliriz. Tüp elektrikli değildir. Suyu su ısıtıcısında da ısıtabiliriz. Bu durumda suyu ısıtmak için elektrikli alet kullanmış oluruz.",
-      "dogrulama_durumu": "DESTEKLENIYOR"
-    },
-    {
-      "id": "GT-09",
-      "bolum_no": 4,
-      "transkript_iddiasi": "Saç kurutma makinesi ve bilgisayar kullanırken elektrik güvenliği kurallarına dikkat edilmelidir.",
-      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
-      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
-      "beklenen_konu": "Elektrikli Araç Gerecin Güvenli Kullanımı",
-      "beklenen_basili_sayfa": 52,
-      "beklenen_fiziksel_sayfa": 53,
-      "gercek_kitap_alintisi": "1. Aslı saç kurutma makinesini kullanırken güvende olmak için nelere dikkat etmelidir? 2. Ahmet bilgisayarı kullanırken güvende olmak için nelere dikkat etmelidir?",
-      "dogrulama_durumu": "DESTEKLENIYOR"
-    },
-    {
-      "id": "GT-10",
-      "bolum_no": 10,
-      "transkript_iddiasi": "Gereksiz yanan lambaları söndürerek elektrik tasarrufu yapmalıyız.",
-      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
-      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
-      "beklenen_konu": "Elektriğin Tasarruflu Kullanımı",
-      "beklenen_basili_sayfa": 61,
-      "beklenen_fiziksel_sayfa": 62,
-      "gercek_kitap_alintisi": "ELEKTRİĞİN TASARRUFLU KULLANIMI: GEREKSİZSE SÖNDÜR...",
-      "dogrulama_durumu": "DESTEKLENIYOR"
-    },
-    {
       "id": "GT-11",
       "bolum_no": 9,
-      "transkript_iddiasi": "Yerli elektrikli otomobilimiz TOGG çevreye zarar vermeyen bir ulaşım aracıdır.",
+      "transkript_cumlesi": "çevreye zarar vermeyen elektrikli arabamız TOGG.",
+      "cikarilan_iddia": "Yerli elektrikli otomobilimiz TOGG çevreye zarar vermeyen bir ulaşım aracıdır.",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
       "beklenen_konu": "Elektrikli Araç Gereç",
@@ -261,7 +234,8 @@
     {
       "id": "GT-12",
       "bolum_no": 2,
-      "transkript_iddiasi": "Kemerlerinizi bağlayın, fen bilimleri uçağımızla yeni bilgiler öğrenmeye yola çıkıyoruz!",
+      "transkript_cumlesi": "Kemerlerinizi bağlayın, fen bilimleri uçağımızla yeni bilgiler öğrenmeye doğru yola çıkıyoruz! Hadi başlayalım!",
+      "cikarilan_iddia": "Kemerlerinizi bağlayın, fen bilimleri uçağımızla yeni bilgiler öğrenmeye yola çıkıyoruz!",
       "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
       "beklenen_unite": "Ders Dışı Motivasyon",
       "beklenen_konu": "Motivasyonel Hitap",
@@ -269,6 +243,47 @@
       "beklenen_fiziksel_sayfa": null,
       "gercek_kitap_alintisi": "Öğretmenin derse başlangıç motivasyon cümlesidir; müfredat konusu veya bilimsel iddia içermez. Sayfa referansı verilmemelidir.",
       "dogrulama_durumu": "YETERSIZ_KANIT"
+    }
+  ],
+  "kitap_kaynak_bulma_kumesi": [
+    {
+      "id": "BK-01",
+      "bolum_no": 3,
+      "arama_amaci": "Kitaptaki piknik tüpü ve su ısıtıcısı karşılaştırması",
+      "arama_sorgusu": "piknik tüpü elektrikli değildir su ısıtıcısı suyu elektrikle ısıtır",
+      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
+      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
+      "beklenen_konu": "Elektrikli Araç Gereç",
+      "beklenen_basili_sayfa": 48,
+      "beklenen_fiziksel_sayfa": 49,
+      "gercek_kitap_alintisi": "Örneğin suyu bir kap yardımıyla piknik tüpünde ısıtabiliriz. Tüp elektrikli değildir. Suyu su ısıtıcısında da ısıtabiliriz. Bu durumda suyu ısıtmak için elektrikli alet kullanmış oluruz.",
+      "dogrulama_durumu": "DESTEKLENIYOR"
+    },
+    {
+      "id": "BK-02",
+      "bolum_no": 4,
+      "arama_amaci": "Kitaptaki elektrikli araçların güvenli kullanımı kuralları",
+      "arama_sorgusu": "saç kurutma makinesi bilgisayar elektrikli araçların güvenli kullanımı elektrik çarpması",
+      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
+      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
+      "beklenen_konu": "Elektrikli Araç Gerecin Güvenli Kullanımı",
+      "beklenen_basili_sayfa": 52,
+      "beklenen_fiziksel_sayfa": 53,
+      "gercek_kitap_alintisi": "1. Aslı saç kurutma makinesini kullanırken güvende olmak için nelere dikkat etmelidir? 2. Ahmet bilgisayarı kullanırken güvende olmak için nelere dikkat etmelidir?",
+      "dogrulama_durumu": "DESTEKLENIYOR"
+    },
+    {
+      "id": "BK-03",
+      "bolum_no": 10,
+      "arama_amaci": "Kitaptaki elektriğin tasarruflu kullanımı ve gereksizse söndür etkinliği",
+      "arama_sorgusu": "elektriğin tasarruflu kullanımı gereksizse söndür kaynaklarımızı tasarruflu kullanmak",
+      "beklenen_kitap": "ilkokul_fenbilimleri_3.sinif_2.kitap.pdf",
+      "beklenen_unite": "6. Ünite: Yaşamımızı Kolaylaştıran Elektrik",
+      "beklenen_konu": "Elektriğin Tasarruflu Kullanımı",
+      "beklenen_basili_sayfa": 61,
+      "beklenen_fiziksel_sayfa": 62,
+      "gercek_kitap_alintisi": "ELEKTRİĞİN TASARRUFLU KULLANIMI Aşağıdaki harf, sayı ve görselleri birlikte kullanarak şifreli kelimeleri bulalım... Kaynaklarımızı tasarruflu kullanmak neden önemlidir?",
+      "dogrulama_durumu": "DESTEKLENIYOR"
     }
   ]
 }

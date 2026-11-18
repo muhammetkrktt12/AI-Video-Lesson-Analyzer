@@ -19,6 +19,7 @@ Kullanım:
 
 import sys
 import time
+import argparse
 from pathlib import Path
 from typing import List, Set, Dict, Any
 import pypdf
@@ -79,6 +80,17 @@ def get_existing_chunk_ids(store: Chroma) -> Set[str]:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="İlkokul (3. ve 4. Sınıf) Fen Bilimleri Kitapları İndeksleme Aracı")
+    parser.add_argument(
+        "--kitap",
+        type=str,
+        default="",
+        help="Yalnızca belirtilen tekil PDF kitabını indeksle (örn: ilkokul_fenbilimleri_3.sinif_2.kitap.pdf)"
+    )
+    args = parser.parse_args()
+
+    selected_books = [args.kitap] if args.kitap else TARGET_BOOKS
+
     print("=" * 75)
     print("🎓 EduFrame AI - İlkokul (3. & 4. Sınıf) 768-D İndeksleme Motoru")
     print("=" * 75)
@@ -86,6 +98,8 @@ def main():
     print(f" -> Hedef Koleksiyon        : {TARGET_COLLECTION}")
     print(f" -> Embedding Modeli        : Ollama ({EMBED_MODEL})")
     print(f" -> Parçalama Yapısı        : 1000 karakter / 150 örtüşme (overlap)")
+    if args.kitap:
+        print(f" -> Filtrelenen Tekil Kitap : {args.kitap}")
     print("=" * 75)
 
     # 1. EMBEDDING BOYUTU DOĞRULAMA (768-D KONTROLÜ)
@@ -106,7 +120,7 @@ def main():
     print("\n[2/5] Hedef İlkokul Kitapları ve Dosya Hash Kontrolü...")
     book_files = []
     file_hashes: Dict[str, str] = {}
-    for fname in TARGET_BOOKS:
+    for fname in selected_books:
         fpath = REFERENCE_BOOKS_DIR / fname
         if not fpath.exists():
             print(f"  [UYARI] Dosya bulunamadı: {fpath}")
