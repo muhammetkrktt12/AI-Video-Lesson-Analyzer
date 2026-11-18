@@ -13,7 +13,22 @@ load_dotenv()
 # --- DİZİN YAPILANDIRMASI ---
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
-CHROMA_DB_DIR = DATA_DIR / "chroma_db"
+
+# ChromaDB Sürüm Dizinleri ve Aktif Yol Yapılandırması:
+# EDUFRAME_CHROMA_DB_DIR ortam değişkeni tanımlıysa o yol kullanılır (örn: data/chroma_db_v2).
+# Tanımlı değilse varsayılan yol güvenli v1 veritabanı (data/chroma_db) olarak kalır (Rollback uyumlu).
+CHROMA_DB_V1_DIR = DATA_DIR / "chroma_db"
+CHROMA_DB_V2_DIR = DATA_DIR / "chroma_db_v2"
+
+_custom_db_dir = os.getenv("EDUFRAME_CHROMA_DB_DIR")
+if _custom_db_dir:
+    _custom_path = Path(_custom_db_dir)
+    CHROMA_DB_DIR = _custom_path if _custom_path.is_absolute() else (ROOT / _custom_path)
+elif CHROMA_DB_V2_DIR.exists():
+    CHROMA_DB_DIR = CHROMA_DB_V2_DIR
+else:
+    CHROMA_DB_DIR = CHROMA_DB_V1_DIR
+
 REFERENCE_BOOKS_DIR = DATA_DIR / "reference_books"
 
 # Geçici medya klasörleri (Video indirme, kare yakalama, PDF çıktıları)
@@ -32,13 +47,29 @@ DEFAULT_SEVIYE = "İlkokul"
 
 # --- GOOGLE GEMINI API AYARLARI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "20"))
+GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash,gemini-flash-latest").split(",") if m.strip()]
+_gemini_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-lite-latest,gemini-3.8-flash,gemini-flash-latest")
+GEMINI_FALLBACK_MODELS = [m.strip() for m in _gemini_fallbacks.split(",") if m.strip()]
 
 # --- OLLAMA VE LOKAL MODEL AYARLARI (Birincil Model) ---
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "embeddinggemma")
 CHAT_MODEL = OLLAMA_MODEL
+
+# CPU üzerinde 4B+ model çıkarımı için gerçekçi zaman aşımı süreleri (saniye)
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "180"))
+OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "180"))
+OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "180"))
+OLLAMA_SECTION_TIMEOUT = int(os.getenv("OLLAMA_SECTION_TIMEOUT", "45"))
+
+# Görev bazlı token üretim sınırları (num_predict)
+OLLAMA_ANALYSIS_NUM_PREDICT = int(os.getenv("OLLAMA_ANALYSIS_NUM_PREDICT", "3500"))
+OLLAMA_QUESTION_NUM_PREDICT = int(os.getenv("OLLAMA_QUESTION_NUM_PREDICT", "3500"))
+OLLAMA_SECTION_NUM_PREDICT = int(os.getenv("OLLAMA_SECTION_NUM_PREDICT", "800"))
 
 # --- VIDEO İNDİRME AYARLARI ---
 DEFAULT_VIDEO_RESOLUTION = "720"  # 360 veya 720

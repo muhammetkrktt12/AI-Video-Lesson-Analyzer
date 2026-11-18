@@ -34,12 +34,15 @@ from services.question_generator import QuestionGenerator
 from services.pdf_generator import PDFGenerator
 from config import DEFAULT_SEVIYE
 
-# Kalite ve Doğrulama Araçları (d6_03_validate & quality_utils)
+# Kalite ve Doğrulama Araçları (utils.lexical_tools öncelikli)
 try:
-    from quality_utils import validate_citations, rerank_candidates
+    from utils.lexical_tools import validate_citations, rerank_candidates
 except ImportError:
-    validate_citations = None
-    rerank_candidates = None
+    try:
+        from quality_utils import validate_citations, rerank_candidates
+    except ImportError:
+        validate_citations = None
+        rerank_candidates = None
 
 # Gemma Tokenizer (tokenizer_utils & gemma_tokenizer.json)
 try:
@@ -182,11 +185,14 @@ def rag_baglam_dugumu(state: EduFrameState) -> Dict[str, Any]:
 
 def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
     """
-    Gemini 1.5 Pro ile multimodal görsel materyal analizi yapar.
-    Ardından Kullanıcı Tavsiyeli 3 Boyutlu RAG Sistemini (Bilgi, Pedagoji, Ölçme-Değerlendirme)
-    her bölüm için çalıştırır ve kaynak izlenebilirliğini doğrular.
+    Multimodal görsel materyal analizi ve 3 Boyutlu RAG entegrasyonu:
+    1. Videoyu zaman damgalı bölümlere ayırır ve kareleri çıkarır.
+    2. Her kare için gerçek multimodal görsel analiz yapar (unsurlar, açıklama, konuşma uyumu, konu ve kavramlar).
+    3. Çok yönlü RAG sorguları ile ders kitabından parça çeker, alakasız parçaları eler (elenen_chunklar),
+       yalnızca doğrulanmış parçaları (destekleyen_chunklar) kabul eder.
+    4. Video ve ders kitabı somut örneklerini harmanlayarak nesnel, 3. tekil şahıs pedagojik sentez üretir.
     """
-    print("\n[LangGraph: gemini_analiz] Gemini 1.5 Pro materyal analizi ve 3D RAG entegrasyonu...")
+    print("\n[LangGraph: gemini_analiz] Multimodal materyal analizi, görsel kavrama ve 3D RAG entegrasyonu...")
     video_bilgisi = state.get("video_bilgisi") or {}
     video_yolu = video_bilgisi.get("file_path", "")
     video_basligi = video_bilgisi.get("title", "Ders Anlatımı")
@@ -201,33 +207,71 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
         video_basligi=video_basligi,
     )
 
-    # -----------------------------------------------------------------------
-    # KULLANICI TAVSİYELİ 3 BOYUTLU RAG VE BÖLÜM BAZLI KAYNAK İZLENEBİLİRLİĞİ
-    # -----------------------------------------------------------------------
-    rag = RAGMotoru()
     bolumler = analiz_sonucu.get("bolumler", [])
     sinif = analiz_sonucu.get("sinif_duzeyi", "3. Sınıf")
     ders = analiz_sonucu.get("ders_adi", "Fen Bilimleri")
 
-    print(f"\n[3D RAG Motoru] {len(bolumler)} bölüm için amaca yönelik sorgular (Bilgi, Pedagoji, Ölçme) başlatılıyor...")
+    # Kareleri analiz öncesi fiziksel olarak diske çıkart (görsel modelin okuyabilmesi için)
+    if video_yolu and os.path.exists(video_yolu):
+        try:
+            processor = VideoProcessor()
+            bolumler = processor.bolum_karelerini_isle(video_yolu, bolumler)
+            analiz_sonucu["bolumler"] = bolumler
+        except Exception as e:
+            print(f"[UYARI] Kare çıkarma ön adımı sırasında hata: {e}")
 
     # -----------------------------------------------------------------------
-    # AŞAMA 1: TÜM BÖLÜMLER İÇİN RAG 3D SORGULARI (Ollama embeddinggemma aktif)
+    # GÖRSEL VE İŞİTSEL İÇERİKLERİN BİRLİKTE ANALİZİ & ÇOK YÖNLÜ 3D RAG
     # -----------------------------------------------------------------------
+    rag = RAGMotoru()
+    print(f"\n[Multimodal & 3D RAG] {len(bolumler)} bölüm için görsel analiz ve konu uygunluk denetimi başlatılıyor...")
+
     tum_dogrulanmis_kaynaklar = []
     for bolum in bolumler:
         b_no = bolum.get("bolum_no", 1)
         b_baslik = bolum.get("bolum_basligi", "")
         b_transkript = bolum.get("transkript", "")
+        kare_yolu = bolum.get("ekran_goruntusu_yolu") or ""
+        zaman_aralik = bolum.get("zaman_araligi")
+        zaman_metni = bolum.get("zaman_araligi_metni") or (
+            f"{zaman_aralik.get('baslangic', '00:00')} - {zaman_aralik.get('bitis', '00:00')}"
+            if isinstance(zaman_aralik, dict) else "00:00 - 00:00"
+        )
 
+        # 1. Aşama: Multimodal Görsel Analiz (Görsel unsurlar, açıklama, konuşma uyumu)
+        gorsel_sonuc = analyzer.gorsel_materyali_analiz_et(
+            resim_yolu=kare_yolu,
+            zaman_damgasi=zaman_metni,
+            transkript=b_transkript,
+            bolum_basligi=b_baslik,
+        )
+        bolum["gorsel_unsurlar"] = gorsel_sonuc.get("gorsel_unsurlar", [])
+        bolum["gorsel_aciklamasi"] = gorsel_sonuc.get("gorsel_aciklamasi", "")
+        bolum["gorsel_konusma_uyumu"] = gorsel_sonuc.get("gorsel_konusma_uyumu", {})
+        bolum["temel_konu"] = gorsel_sonuc.get("temel_konu") or b_baslik
+        bolum["alt_kavramlar"] = gorsel_sonuc.get("alt_kavramlar", [])
+        bolum["gorsel_analiz_kaynagi"] = gorsel_sonuc.get("gorsel_analiz_kaynagi", "bilinmiyor")
+
+        # 2. Aşama: Çok Yönlü 3 Boyutlu RAG ve Uygunluk Puanlaması (Alakasız chunkları ele)
         rag_sonuc = rag.bolum_bazli_cok_yonlu_arama(
             bolum_basligi=b_baslik,
             transkript=b_transkript,
             egitim_seviyesi=seviye,
             sinif=sinif,
             ders_adi=ders,
-            k=2
+            k=2,
+            gorsel_unsurlar=bolum.get("gorsel_unsurlar"),
+            gorsel_aciklamasi=bolum.get("gorsel_aciklamasi", ""),
+            temel_konu=bolum.get("temel_konu", ""),
+            alt_kavramlar=bolum.get("alt_kavramlar"),
         )
+
+        bolum["rag_sorgulari"] = rag_sonuc.get("rag_sorgulari", [])
+        bolum["destekleyen_chunklar"] = rag_sonuc.get("destekleyen_chunklar", [])
+        bolum["ana_kaynaklar"] = rag_sonuc.get("ana_kaynaklar", [])
+        bolum["yardimci_kaynaklar"] = rag_sonuc.get("yardimci_kaynaklar", [])
+        bolum["elenen_chunklar"] = rag_sonuc.get("elenen_chunklar", [])
+        bolum["kaynak_destek_durumu"] = rag_sonuc.get("kaynak_destek_durumu", "destek_yok")
 
         bolum["rag_3d"] = {
             "bilgi": rag_sonuc["bilgi"]["baglam"],
@@ -235,20 +279,22 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
             "olcme_degerlendirme": rag_sonuc["olcme_degerlendirme"]["baglam"]
         }
 
-        # NOKTA ATIŞI: 768-Boyutlu RAG'dan gelen doğrulanmış kitap ve sayfa referansını bölüme aktar
-        if rag_sonuc.get("en_iyi_referans"):
+        if rag_sonuc.get("en_iyi_referans") and rag_sonuc.get("kaynak_destek_durumu") != "destek_yok":
             bolum["kitap_referansi"] = rag_sonuc["en_iyi_referans"]
+        elif not bolum.get("kitap_referansi") or bolum.get("kitap_referansi") == "MEB Ders Kitabı Referansı":
+            bolum["kitap_referansi"] = rag_sonuc.get("en_iyi_referans") or "Doğrulanmış RAG eşleşmesi bulunamadı"
+        bolum["rag_kaynaklari"] = rag_sonuc.get("tum_kaynaklar", [])
 
-        # Kaynak izlenebilirliği listesini topla
+        # Sadece doğrulanmış parçaları genel kaynakça havuzuna ekle
         for k_item in rag_sonuc.get("tum_kaynaklar", []):
             tum_dogrulanmis_kaynaklar.append(k_item)
 
-        print(f" -> [Bölüm {b_no}] 768-D RAG 3D sorgusu tamamlandı: {b_baslik[:35]}... (Referans: {bolum.get('kitap_referansi')})")
+        print(f" -> [Bölüm {b_no}] Multimodal görsel & 3D RAG tamamlandı: {b_baslik[:30]}... (Uyum: {bolum.get('gorsel_konusma_uyumu', {}).get('derece')}, Destek: {bolum.get('kaynak_destek_durumu')})")
 
     # -----------------------------------------------------------------------
     # AŞAMA 2: PEDAGOJİK HARMANLAMA VE DERİN KONU ANLATIMI SENTEZİ
     # -----------------------------------------------------------------------
-    print(f"\n[Pedagojik Sentez] 10 bölüm için öğretmen örnekleri ve MEB ders kitabı harmanlanıyor...")
+    print(f"\n[Pedagojik Sentez] 10 bölüm için öğretmen anlatımı, görsel açıklaması ve MEB ders kitabı harmanlanıyor...")
     for bolum in bolumler:
         analyzer.bolum_pedagojik_sentezle(
             bolum=bolum,
@@ -257,6 +303,16 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
             ders=ders,
             egitim_seviyesi=seviye
         )
+
+        # Standart ortak veri yapısı alanlarını güvenceye al
+        b_no = bolum.get("bolum_no", 1)
+        bolum["bolum_id"] = bolum.get("bolum_id") or f"bolum_{b_no:02d}"
+        bolum["pedagojik_anlatim"] = bolum.get("duzenlenmis_anlatim", "")
+        z_aralik = bolum.get("zaman_araligi")
+        if isinstance(z_aralik, dict):
+            bolum["kare_zamani"] = z_aralik.get("kare_zamani", 0.0)
+        elif "kare_zamani" not in bolum:
+            bolum["kare_zamani"] = float(30 * b_no)
 
     analiz_sonucu["tum_kaynaklar"] = tum_dogrulanmis_kaynaklar
     return {"video_analizi": analiz_sonucu}

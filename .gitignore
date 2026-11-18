@@ -22,6 +22,7 @@ venv/
 env/
 ENV/
 
+
 # ==========================================
 # 3. IDE dosyalari
 # ==========================================
@@ -46,6 +47,8 @@ credentials.json
 # ==========================================
 data/chroma_db/
 data/chroma_test_db/
+data/chroma_db_v2_dryrun/
+data/chroma_db_v2/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
@@ -93,3 +96,5 @@ temp/
 .DS_Store
 Thumbs.db
 desktop.ini
+chroma_db_backup_pre_migration
+chroma_db_backup_903

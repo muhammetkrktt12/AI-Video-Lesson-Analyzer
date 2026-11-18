@@ -13,6 +13,7 @@ Bu modül tüm ders kitapları için ortak ve güvenli indeksleme fonksiyonları
 """
 
 import time
+import re
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Set
@@ -35,9 +36,17 @@ def calculate_file_hash(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
-def generate_chunk_id(filename: str, file_hash: str, page_no: int, chunk_idx: int) -> str:
-    """Tekrarlanabilir, dosya sürümüne ve sayfa numarasına duyarlı Chunk ID üretir."""
-    return f"{filename}:{file_hash[:12]}:p{page_no:04d}:c{chunk_idx:03d}"
+def generate_chunk_id(
+    filename: str,
+    file_hash: str,
+    physical_page: int,
+    chunk_idx: int,
+    version: str = ""
+) -> str:
+    """Tekrarlanabilir, dosya sürümüne ve fiziksel sayfa numarasına duyarlı benzersiz Chunk ID üretir."""
+    if version:
+        return f"{filename}:{file_hash[:12]}:{version}:phys_{physical_page:04d}:c{chunk_idx:03d}"
+    return f"{filename}:{file_hash[:12]}:phys_{physical_page:04d}:c{chunk_idx:03d}"
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +167,8 @@ PRIMARY_BOOK_MANIFESTS = {
         "ders": "Fen Bilimleri",
         "seviye": "İlkokul",
         "uniteler": [
-            # 1. Ünite: Yer Kabuğu ve Dünya'mızın Hareketleri (Basılı Sayfa 22 - 45)
-            (22, 32, "1. Ünite: Yer Kabuğu ve Hareketler", "Yer Kabuğunun Yapısı", "Kayaçlar, Madenler ve Fosiller"),
+            # 1. Ünite: Yer Kabuğu ve Dünya'mızın Hareketleri (Basılı Sayfa 20 - 45)
+            (20, 32, "1. Ünite: Yer Kabuğu ve Hareketler", "Yer Kabuğunun Yapısı", "Kayaçlar, Madenler ve Fosiller"),
             (33, 45, "1. Ünite: Yer Kabuğu ve Hareketler", "Dünya'mızın Hareketleri", "Dönme ve Dolanma Hareketleri, Gece-Gündüz, Yıl"),
             # 2. Ünite: Besinlerimiz (Basılı Sayfa 46 - 74)
             (46, 58, "2. Ünite: Besinlerimiz", "Besinler ve Özellikleri", "Karbonhidrat, Protein, Yağ, Vitamin, Su ve Mineraller"),
@@ -209,6 +218,9 @@ def get_book_metadata_and_unit(
             "egitim_seviyesi": manifest["seviye"],
             "source": filename
         }
+        if printed_page_no <= 0:
+            return base_meta, "Ön Sayfalar", "Kapak ve Tanıtım", "Kapak / Künye"
+
         for start_p, end_p, u_title, k_title, a_title in manifest["uniteler"]:
             if start_p <= printed_page_no <= end_p:
                 return base_meta, u_title, k_title, a_title
@@ -246,6 +258,48 @@ def count_tokens(text: str, tokenizer=None) -> int:
             pass
     # Tokenizer yüklenemezse güvenli yaklaşık hesap
     return max(1, len(text) // 4)
+
+
+def clean_pedagogical_text(text: str) -> str:
+    """
+    MEB ders kitabı sayfalarındaki öğrenci cevap çizgilerini,
+    uzun nokta serilerini ve biçimlendirme gürültüsünü temizler.
+    Eğitsel soru metinlerini, şıkları, Roma rakamlarını ve açıklamaları korur.
+    """
+    if not text:
+        return ""
+
+    lines = text.split("\n")
+    cleaned_lines = []
+
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+
+        # 1. Tamamen nokta, alt çizgi, tire veya boşluktan oluşan satırları temizle
+        # (Öğrenci cevap satırları)
+        non_noise = re.sub(r'[\s\.\_\-\–\—\•\*\t\r]', '', line_stripped)
+        if len(non_noise) == 0:
+            continue
+
+        # 2. Satır içindeki 4 veya daha fazla ardışık nokta dizisini ' ... ' ile sadeleştir
+        line_clean = re.sub(r'(?:\s*\.){4,}', ' ... ', line_stripped)
+
+        # 3. Satır içindeki 3 veya daha fazla ardışık alt çizgi/tire dizisini sadeleştir
+        line_clean = re.sub(r'_{3,}', ' ___ ', line_clean)
+        line_clean = re.sub(r'-{3,}', ' --- ', line_clean)
+
+        # 4. Fazla boşlukları tek boşluğa indir
+        line_clean = re.sub(r'[ \t]+', ' ', line_clean).strip()
+
+        if line_clean:
+            cleaned_lines.append(line_clean)
+
+    # 5. Art arda ikiden fazla boş satırları birleştir
+    result = "\n".join(cleaned_lines)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()
 
 
 def create_pedagogical_splitter(
@@ -328,10 +382,15 @@ def safe_add_documents_batch(
 # ---------------------------------------------------------------------------
 # 7. SÜRÜM TEMİZLİĞİ (ESKİ HASH'Lİ PARÇALARI SİLME)
 # ---------------------------------------------------------------------------
-def cleanup_stale_chunks(store: Chroma, filename: str, current_hash: str) -> int:
+def cleanup_stale_chunks(
+    store: Chroma,
+    filename: str,
+    current_hash: str,
+    target_version: str = ""
+) -> int:
     """
     PDF dosyası değiştiğinde veya yeniden indekslendiğinde,
-    aynı dosya adına ait eski hash'li parçaları ChromaDB'den temizler.
+    aynı dosya adına ait eski hash'li, eski şemalı veya eski sürüm parçaları ChromaDB'den temizler.
     """
     try:
         col = store._collection
@@ -343,12 +402,16 @@ def cleanup_stale_chunks(store: Chroma, filename: str, current_hash: str) -> int
         stale_ids = []
         for cid, meta in zip(res["ids"], res["metadatas"]):
             file_h = meta.get("file_hash", "")
-            if file_h and file_h != target_hash_prefix:
+            is_stale_hash = bool(file_h and file_h != target_hash_prefix)
+            is_legacy_schema = bool(":p" in cid and ":phys_" not in cid)
+            is_stale_version = bool(target_version and f":{target_version}:" not in cid)
+            if is_stale_hash or is_legacy_schema or is_stale_version:
                 stale_ids.append(cid)
 
         if stale_ids:
             col.delete(ids=stale_ids)
             return len(stale_ids)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[UYARI] cleanup_stale_chunks sırasında veritabanı hatası ({filename}): {e}")
+        raise RuntimeError(f"ChromaDB eski sürüm temizliği ({filename}) başarısız oldu: {e}") from e
     return 0
