@@ -277,8 +277,10 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
             "olcme_degerlendirme": rag_sonuc["olcme_degerlendirme"]["baglam"]
         }
 
-        if rag_sonuc.get("en_iyi_referans"):
+        if rag_sonuc.get("en_iyi_referans") and rag_sonuc.get("kaynak_destek_durumu") != "destek_yok":
             bolum["kitap_referansi"] = rag_sonuc["en_iyi_referans"]
+        elif not bolum.get("kitap_referansi") or bolum.get("kitap_referansi") == "MEB Ders Kitabı Referansı":
+            bolum["kitap_referansi"] = rag_sonuc.get("en_iyi_referans") or "Doğrulanmış RAG eşleşmesi bulunamadı"
         bolum["rag_kaynaklari"] = rag_sonuc.get("tum_kaynaklar", [])
 
         # Sadece doğrulanmış parçaları genel kaynakça havuzuna ekle

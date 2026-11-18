@@ -301,7 +301,11 @@ SADECE geçerli bir JSON nesnesi döndür."""
                 b_kavramlar = [k.get("kavram", "").lower() for k in b.get("onemli_kavramlar", [])]
                 b_ref = b.get("kitap_referansi")
 
-                if not b_ref or b_ref == "MEB Ders Kitabı Referansı":
+                if not b_ref or b_ref in [
+                    "MEB Ders Kitabı Referansı",
+                    "Doğrulanmış RAG eşleşmesi bulunamadı",
+                    "Doğrulanmış ders kitabı kaynağı bulunamadı",
+                ]:
                     continue
 
                 # Kavram veya başlık örtüşmesi
@@ -317,7 +321,15 @@ SADECE geçerli bir JSON nesnesi döndür."""
             if not eslesen_ref:
                 for b in bolumler:
                     b_ref = b.get("kitap_referansi")
-                    if b_ref and b_ref != "MEB Ders Kitabı Referansı" and ("Sayfa" in b_ref or "s." in b_ref or "Sayfa" in str(b_ref)):
+                    if (
+                        b_ref
+                        and b_ref not in [
+                            "MEB Ders Kitabı Referansı",
+                            "Doğrulanmış RAG eşleşmesi bulunamadı",
+                            "Doğrulanmış ders kitabı kaynağı bulunamadı",
+                        ]
+                        and ("Sayfa" in b_ref or "s." in b_ref or "Sayfa" in str(b_ref))
+                    ):
                         eslesen_ref = b_ref
                         if b.get("rag_kaynaklari"):
                             eslesen_rag_meta = b["rag_kaynaklari"][0]
@@ -395,9 +407,148 @@ SADECE geçerli bir JSON nesnesi döndür."""
         if egitim_seviyesi == "İlkokul":
             unite = str(video_analizi.get("unite_basligi", "")).lower()
             bolum_basliklari = " ".join([b.get("bolum_basligi", "") for b in video_analizi.get("bolumler", [])]).lower()
-            is_arac_gerecler = "araç" in unite or "aydınlatma" in bolum_basliklari or "ısınma" in bolum_basliklari or "soğutma" in bolum_basliklari
+            is_elektrik_kaynaklari = any(k in unite or k in bolum_basliklari for k in ["kaynak", "şehir elektriği", "sehir elektrigi", "pil", "batarya", "akü", "aku"])
+            is_arac_gerecler = "kullanım amaç" in unite or "aydınlatma" in bolum_basliklari or "ısınma" in bolum_basliklari or "soğutma" in bolum_basliklari
 
-            if is_arac_gerecler:
+            if is_elektrik_kaynaklari or not is_arac_gerecler:
+                fallback_sorular = [
+                    {
+                        "no": 1,
+                        "kategori": "💡 Kavram Keşfi",
+                        "ilgili_kavram": "Elektrik Enerjisi ve Dönüşümü",
+                        "tip": "Doğru - Yanlış",
+                        "soru": "Elektrik enerjisi; evimizde ve okulumuzda kullandığımız aletler sayesinde ışık (ampul), ısı (fırın, ütü) ve hareket (vantilatör) enerjisine dönüştürülebilen temel bir enerji türüdür.",
+                        "secenekler": ["Doğru", "Yanlış"],
+                        "dogru_cevap": "Doğru",
+                        "aciklama": "Elektrik tek başına bir alet değil enerjidir. Aletlerin içine girerek ihtiyacımıza göre ışığa, ısıya veya harekete dönüşür.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 2,
+                        "kategori": "🔍 Günlük Yaşam Analizi",
+                        "ilgili_kavram": "Enerji İhtiyacı ve Taşınabilirlik",
+                        "tip": "Çoktan Seçmeli",
+                        "soru": "Dışarıda bahçede veya parkta oynarken yanımızda taşıdığımız oyuncak arabanın veya el fenerinin aniden durmasının en temel bilimsel sebebi aşağıdakilerden hangisidir?",
+                        "secenekler": [
+                            "A) Havanın kararması ve güneş ışığının kaybolması",
+                            "B) İçine takılan pildeki kimyasal enerjinin tükenmiş olması ve gerilimin düşmesi",
+                            "C) Şehirdeki büyük elektrik santralinin kapanması",
+                            "D) Aletin duvardaki prize takılmak istemesi"
+                        ],
+                        "dogru_cevap": "B",
+                        "aciklama": "Taşınabilir aletler pildeki sınırlı kimyasal enerjiyle çalışır; pildeki enerji bittiğinde gerilim düşer ve alet durur.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 3,
+                        "kategori": "🧩 Kavram Tamamlama",
+                        "ilgili_kavram": "Şehir Elektriği ve Santraller",
+                        "tip": "Boşluk Doldurma",
+                        "soru": "Cümledeki noktalı yeri doğru kavramla tamamlayınız:\nBarajlardaki suyun gücü, rüzgâr türbinleri veya güneş panelleri kullanılarak santrallerde yüksek güçte üretilen ve kablolarla evlerimize ulaştırılan enerji kaynağına ........................................ denir.",
+                        "secenekler": [],
+                        "dogru_cevap": "Şehir Elektriği",
+                        "aciklama": "Santrallerde üretilen elektrik, iletim hatları ve trafolar üzerinden evlerimizin prizlerine kadar kesintisiz ulaştırılır.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 4,
+                        "kategori": "⚡ Elektrik Dedektifi",
+                        "ilgili_kavram": "Priz Bağlantısı ve Yüksek Güçlü Aletler",
+                        "tip": "Çoktan Seçmeli",
+                        "soru": "Aşağıdaki ev aletlerinden hangisi çok yüksek miktarda enerji tükettiği için küçük kumanda pilleriyle ÇALIŞTIRILAMAZ ve mutlaka duvardaki prize takılmalıdır?",
+                        "secenekler": [
+                            "A) Kol saati",
+                            "B) Duvar saati",
+                            "C) Çamaşır makinesi",
+                            "D) Televizyon uzaktan kumandası"
+                        ],
+                        "dogru_cevap": "C",
+                        "aciklama": "Çamaşır makinesi, buzdolabı ve fırın gibi büyük aletler çok yüksek elektrik enerjisine ihtiyaç duyar; bu enerji yalnızca prizden (şehir elektriği) sağlanabilir.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 5,
+                        "kategori": "🎯 Doğru mu, Yanlış mı?",
+                        "ilgili_kavram": "Pil ve Düşük Güç Tüketimi",
+                        "tip": "Doğru - Yanlış",
+                        "soru": "Pil; az miktarda elektrik enerjisi harcayan, hafif ve kablosuz olarak kolayca taşınabilen küçük aletleri (duvar saati, radyo, el feneri) çalıştırmak için kullanılan güvenli bir elektrik kaynağıdır. Piller genellikle tek kullanımlık (primer) olsa da şarj edilebilir (sekonder) türleri de mevcuttur.",
+                        "secenekler": ["Doğru", "Yanlış"],
+                        "dogru_cevap": "Doğru",
+                        "aciklama": "Piller düşük enerji depolar ve kabloya ihtiyaç duymadan cihazları yanımızda taşımamızı sağlar.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 6,
+                        "kategori": "🌱 Doğa ve Çevre Bilinci",
+                        "ilgili_kavram": "Atık Pil ve Geri Dönüşüm",
+                        "tip": "Çoktan Seçmeli",
+                        "soru": "Tükenen pilleri normal ev çöpüne, sokağa veya toprağa atmak yerine okullardaki ve marketlerdeki 'Atık Pil Kutusu'na atmamızın en önemli nedeni nedir?",
+                        "secenekler": [
+                            "A) Pillerin kutu içinde kendi kendine renk değiştirmesi",
+                            "B) İçlerindeki zararlı kimyasal maddelerin toprağa ve içme suyuna karışıp canlılara zarar vermesini önlemek",
+                            "C) Çöp poşetinin daha hafif kalmasını sağlamak",
+                            "D) Pillerin kutunun içinde sihirli şekilde yeniden dolması"
+                        ],
+                        "dogru_cevap": "B",
+                        "aciklama": "Pillerin içinde ağır metaller ve kimyasallar bulunur. Çöpe atılırlarsa toprağı ve suyu kirletir; bu yüzden mutlaka atık pil kutusunda toplanmalıdır.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 7,
+                        "kategori": "🧩 Kavram Tamamlama",
+                        "ilgili_kavram": "Batarya ve Şarj Edilebilirlik",
+                        "tip": "Boşluk Doldurma",
+                        "soru": "Cümledeki noktalı yeri doğru kavramla tamamlayınız:\nBirden fazla pilin bir araya gelmesiyle oluşan; dizüstü bilgisayar, tablet ve akıllı telefonlarda kullanılan, bittiğinde çöpe atılmayıp adaptörle şarj edilebilen elektrik kaynağına ........................................ denir.",
+                        "secenekler": [],
+                        "dogru_cevap": "Batarya",
+                        "aciklama": "Bataryalar şarj edilebilir özelliktedir; prizden elektrik enerjisi depolayarak aletleri kablosuz çalıştırmaya devam eder.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 8,
+                        "kategori": "🔍 Günlük Yaşam Analizi",
+                        "ilgili_kavram": "Akü (Akümülatör) ve Taşıtlar",
+                        "tip": "Çoktan Seçmeli",
+                        "soru": "Otomobil, otobüs, kamyon, uçak ve gemi gibi motorlu ulaşım araçlarında motoru ilk çalıştıran (marş veren) ve farları aydınlatan güçlü elektrik kaynağı hangisidir?",
+                        "secenekler": [
+                            "A) Kumanda pili",
+                            "B) Güneş pili",
+                            "C) Akü (Akümülatör)",
+                            "D) Rüzgâr türbini"
+                        ],
+                        "dogru_cevap": "C",
+                        "aciklama": "Motorlu taşıtların motorunu ilk çalıştırma anında harekete geçiren ve elektrik donanımını besleyen büyük ve güçlü kaynak aküdür. Araç çalışırken alternatör vasıtasıyla şarj edilir.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 9,
+                        "kategori": "⚡ Eşleştirme ve Sınıflandırma",
+                        "ilgili_kavram": "Elektrik Kaynaklarını Ayırt Etme",
+                        "tip": "Çoktan Seçmeli",
+                        "soru": "Aşağıdaki araç ve kullandığı temel elektrik kaynağı eşleştirmelerinden hangisi YANLIŞTIR?",
+                        "secenekler": [
+                            "A) Buzdolabı  ➔  Şehir Elektriği",
+                            "B) Akıllı Telefon  ➔  Batarya",
+                            "C) Şehirler Arası Otobüs  ➔  Kumanda Pili",
+                            "D) Duvar Saati  ➔  Pil"
+                        ],
+                        "dogru_cevap": "C",
+                        "aciklama": "Otobüs gibi büyük motorlu taşıtlar küçük kumanda pilleriyle değil, yüksek güce sahip dayanıklı akülerle çalışır.",
+                        "kazanim_referansi": ""
+                    },
+                    {
+                        "no": 10,
+                        "kategori": "🛡️ Güvenlik Dedektifi",
+                        "ilgili_kavram": "Elektrik Güvenliği ve Bilinçli Kullanım",
+                        "tip": "Doğru - Yanlış",
+                        "soru": "Evimizdeki şehir elektriği prizlerinde bulunan elektrik enerjisi, pillerdeki enerjiden çok daha yüksek ve tehlikelidir; bu yüzden prizlere kesinlikle yabancı cisim sokulmamalı ve ıslak ellerle elektrikli aletlere dokunulmamalıdır.",
+                        "secenekler": ["Doğru", "Yanlış"],
+                        "dogru_cevap": "Doğru",
+                        "aciklama": "Şehir elektriği elektrik çarpmasına ve hayati tehlikeye neden olabilir. Güvenlik kurallarına uymak can güvenliğimiz için zorunludur.",
+                        "kazanim_referansi": ""
+                    }
+                ]
+            else:
                 fallback_sorular = [
                     {
                         "no": 1,
@@ -537,144 +688,6 @@ SADECE geçerli bir JSON nesnesi döndür."""
                         "secenekler": ["Doğru", "Yanlış"],
                         "dogru_cevap": "Doğru",
                         "aciklama": "Su elektriği iletir; ıslak ellerle elektrikli aletlere dokunmak can güvenliğini tehlikeye sokar.",
-                        "kazanim_referansi": ""
-                    }
-                ]
-            else:
-                fallback_sorular = [
-                    {
-                        "no": 1,
-                        "kategori": "💡 Kavram Keşfi",
-                        "ilgili_kavram": "Elektrik Enerjisi ve Dönüşümü",
-                        "tip": "Doğru - Yanlış",
-                        "soru": "Elektrik enerjisi; evimizde ve okulumuzda kullandığımız aletler sayesinde ışık (ampul), ısı (fırın, ütü) ve hareket (vantilatör) enerjisine dönüştürülebilen temel bir enerji türüdür.",
-                        "secenekler": ["Doğru", "Yanlış"],
-                        "dogru_cevap": "Doğru",
-                        "aciklama": "Elektrik tek başına bir alet değil enerjidir. Aletlerin içine girerek ihtiyacımıza göre ışığa, ısıya veya harekete dönüşür.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 2,
-                        "kategori": "🔍 Günlük Yaşam Analizi",
-                        "ilgili_kavram": "Enerji İhtiyacı ve Taşınabilirlik",
-                        "tip": "Çoktan Seçmeli",
-                        "soru": "Dışarıda bahçede veya parkta oynarken yanımızda taşıdığımız oyuncak arabanın veya el fenerinin aniden durmasının en temel bilimsel sebebi aşağıdakilerden hangisidir?",
-                        "secenekler": [
-                            "A) Havanın kararması ve güneş ışığının kaybolması",
-                            "B) İçine takılan pildeki depolanmış elektrik enerjisinin tükenmiş olması",
-                            "C) Şehirdeki büyük elektrik santralinin kapanması",
-                            "D) Aletin duvardaki prize takılmak istemesi"
-                        ],
-                        "dogru_cevap": "B",
-                        "aciklama": "Taşınabilir aletler pildeki sınırlı kimyasal enerjiyle çalışır; pildeki enerji bittiğinde alet hemen durur.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 3,
-                        "kategori": "🧩 Kavram Tamamlama",
-                        "ilgili_kavram": "Şehir Elektriği ve Santraller",
-                        "tip": "Boşluk Doldurma",
-                        "soru": "Cümledeki noktalı yeri doğru kavramla tamamlayınız:\nBarajlardaki suyun gücü, rüzgâr türbinleri veya güneş panelleri kullanılarak santrallerde yüksek güçte üretilen ve kablolarla evlerimize ulaştırılan enerji kaynağına ........................................ denir.",
-                        "secenekler": [],
-                        "dogru_cevap": "Şehir Elektriği",
-                        "aciklama": "Santrallerde üretilen elektrik, iletim hatları ve trafolar üzerinden evlerimizin prizlerine kadar kesintisiz ulaştırılır.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 4,
-                        "kategori": "⚡ Elektrik Dedektifi",
-                        "ilgili_kavram": "Priz Bağlantısı ve Yüksek Güçlü Aletler",
-                        "tip": "Çoktan Seçmeli",
-                        "soru": "Aşağıdaki ev aletlerinden hangisi çok yüksek miktarda enerji tükettiği için küçük kumanda pilleriyle ÇALIŞTIRILAMAZ ve mutlaka duvardaki prize takılmalıdır?",
-                        "secenekler": [
-                            "A) Kol saati",
-                            "B) Duvar saati",
-                            "C) Çamaşır makinesi",
-                            "D) Televizyon uzaktan kumandası"
-                        ],
-                        "dogru_cevap": "C",
-                        "aciklama": "Çamaşır makinesi, buzdolabı ve ütü gibi büyük aletler çok yüksek elektrik enerjisine ihtiyaç duyar; bu enerji yalnızca prizden (şehir elektriği) sağlanabilir.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 5,
-                        "kategori": "🎯 Doğru mu, Yanlış mı?",
-                        "ilgili_kavram": "Pil ve Düşük Güç Tüketimi",
-                        "tip": "Doğru - Yanlış",
-                        "soru": "Pil; az miktarda elektrik enerjisi harcayan, hafif ve kablosuz olarak kolayca taşınabilen küçük aletleri (duvar saati, radyo, el feneri) çalıştırmak için kullanılan güvenli bir elektrik kaynağıdır.",
-                        "secenekler": ["Doğru", "Yanlış"],
-                        "dogru_cevap": "Doğru",
-                        "aciklama": "Piller düşük enerji depolar ve kabloya ihtiyaç duymadan cihazları yanımızda taşımamızı sağlar.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 6,
-                        "kategori": "🌱 Doğa ve Çevre Bilinci",
-                        "ilgili_kavram": "Atık Pil ve Geri Dönüşüm",
-                        "tip": "Çoktan Seçmeli",
-                        "soru": "Tükenen pilleri normal ev çöpüne, sokağa veya toprağa atmak yerine okullardaki ve marketlerdeki 'Atık Pil Kutusu'na atmamızın en önemli nedeni nedir?",
-                        "secenekler": [
-                            "A) Pillerin kutu içinde kendi kendine renk değiştirmesi",
-                            "B) İçlerindeki zararlı kimyasal maddelerin toprağa ve içme suyuna karışıp canlılara zarar vermesini önlemek",
-                            "C) Çöp poşetinin daha hafif kalmasını sağlamak",
-                            "D) Pillerin kutunun içinde sihirli şekilde yeniden dolması"
-                        ],
-                        "dogru_cevap": "B",
-                        "aciklama": "Pillerin içinde cıva, kadmiyum gibi zehirli maddeler bulunur. Çöpe atılırlarsa toprağı ve suyu zehirler; bu yüzden mutlaka atık pil kutusunda toplanmalıdır.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 7,
-                        "kategori": "🧩 Kavram Tamamlama",
-                        "ilgili_kavram": "Batarya ve Şarj Edilebilirlik",
-                        "tip": "Boşluk Doldurma",
-                        "soru": "Cümledeki noktalı yeri doğru kavramla tamamlayınız:\nBirden fazla pilin bir araya gelmesiyle oluşan; dizüstü bilgisayar, tablet ve akıllı telefonlarda kullanılan, bittiğinde çöpe atılmayıp adaptörle şarj edilebilen elektrik kaynağına ........................................ denir.",
-                        "secenekler": [],
-                        "dogru_cevap": "Batarya",
-                        "aciklama": "Bataryalar şarj edilebilir özelliktedir; prizden elektrik enerjisi depolayarak aletleri kablosuz çalıştırmaya devam eder.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 8,
-                        "kategori": "🔍 Günlük Yaşam Analizi",
-                        "ilgili_kavram": "Akü (Akümülatör) ve Taşıtlar",
-                        "tip": "Çoktan Seçmeli",
-                        "soru": "Otomobil, otobüs, kamyon, uçak ve gemi gibi motorlu ulaşım araçlarında motoru ilk çalıştıran ve farları aydınlatan güçlü elektrik kaynağı hangisidir?",
-                        "secenekler": [
-                            "A) Kumanda pili",
-                            "B) Güneş pili",
-                            "C) Akü (Akümülatör)",
-                            "D) Rüzgâr türbini"
-                        ],
-                        "dogru_cevap": "C",
-                        "aciklama": "Motorlu taşıtların motorunu ilk çalıştırma anında harekete geçiren ve elektrik donanımını besleyen büyük ve güçlü kaynak aküdür.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 9,
-                        "kategori": "⚡ Eşleştirme ve Sınıflandırma",
-                        "ilgili_kavram": "Elektrik Kaynaklarını Ayırt Etme",
-                        "tip": "Çoktan Seçmeli",
-                        "soru": "Aşağıdaki araç ve kullandığı temel elektrik kaynağı eşleştirmelerinden hangisi YANLIŞTIR?",
-                        "secenekler": [
-                            "A) Buzdolabı  ➔  Şehir Elektriği",
-                            "B) Akıllı Telefon  ➔  Batarya",
-                            "C) Şehirler Arası Otobüs  ➔  Kumanda Pili",
-                            "D) Duvar Saati  ➔  Pil"
-                        ],
-                        "dogru_cevap": "C",
-                        "aciklama": "Otobüs gibi büyük motorlu taşıtlar küçük kumanda pilleriyle değil, yüksek güce sahip dayanıklı akülerle çalışır.",
-                        "kazanim_referansi": ""
-                    },
-                    {
-                        "no": 10,
-                        "kategori": "🛡️ Güvenlik Dedektifi",
-                        "ilgili_kavram": "Elektrik Güvenliği ve Bilinçli Kullanım",
-                        "tip": "Doğru - Yanlış",
-                        "soru": "Evimizdeki şehir elektriği prizlerinde bulunan elektrik enerjisi, pillerdeki enerjiden çok daha yüksek ve tehlikelidir; bu yüzden prizlere kesinlikle yabancı cisim sokulmamalı ve ıslak ellerle elektrikli aletlere dokunulmamalıdır.",
-                        "secenekler": ["Doğru", "Yanlış"],
-                        "dogru_cevap": "Doğru",
-                        "aciklama": "Şehir elektriği elektrik çarpmasına ve hayati tehlikeye neden olabilir. Güvenlik kurallarına uymak can güvenliğimiz için zorunludur.",
                         "kazanim_referansi": ""
                     }
                 ]

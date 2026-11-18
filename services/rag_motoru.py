@@ -375,10 +375,52 @@ class RAGMotoru:
                 adaylar = store.similarity_search(query=sorgu, k=aday_sayisi, filter=filtre)
             except Exception as e:
                 print(f"[HATA] Filtreli ve rerank'li aramada sorun oluştu: {e}")
-                return []
+                adaylar = []
+
+        # 3. Güvenlik Ağı: Eğer similarity_search başarısız olduysa (Ollama çevrimdışı veya sandbox kısıtı)
+        # ChromaDB SQLite koleksiyonundan doğrudan filtreli dokümanları çekip lexical_rerank ile sırala
+        if not adaylar:
+            try:
+                col = store._collection
+                where_clause = {}
+                if sinif:
+                    where_clause["sinif"] = sinif
+                elif egitim_seviyesi in EGITIM_SEVIYELERI:
+                    where_clause["egitim_seviyesi"] = egitim_seviyesi
+                res = col.get(where=where_clause if where_clause else None, include=["documents", "metadatas"])
+                if res and res.get("documents"):
+                    raw_docs = []
+                    sorgu_lower = sorgu.lower()
+                    for doc_text, meta in zip(res["documents"], res["metadatas"]):
+                        unite = str(meta.get("unite", "")).lower()
+                        konu = str(meta.get("konu", "")).lower()
+                        if any(x in unite or x in konu for x in ["ön sayfalar", "kapak", "içindekiler", "sözlük", "ekler", "kitap ekleri"]):
+                            if not any(x in sorgu_lower for x in ["kapak", "künye", "içindekiler", "sözlük"]):
+                                continue
+                        raw_docs.append(Document(page_content=doc_text, metadata=meta))
+                    if raw_docs and lexical_rerank:
+                        sirali = lexical_rerank(sorgu, raw_docs, lexical_agirlik=1.0, top_n=aday_sayisi)
+                        adaylar = [d for d, s in sirali]
+                    elif raw_docs:
+                        adaylar = raw_docs[:aday_sayisi]
+            except Exception as direct_err:
+                print(f"[UYARI] Doğrudan collection get fallback hatası: {direct_err}")
 
         if not adaylar:
             return []
+
+        # Kapak / künye / ön sayfaları konu içeriği aramalarından ayıkla
+        sorgu_lower = sorgu.lower()
+        temiz_adaylar = []
+        for d in adaylar:
+            unite = str(d.metadata.get("unite", "")).lower()
+            konu = str(d.metadata.get("konu", "")).lower()
+            if any(x in unite or x in konu for x in ["ön sayfalar", "kapak", "içindekiler", "sözlük", "ekler", "kitap ekleri"]):
+                if not any(x in sorgu_lower for x in ["kapak", "künye", "içindekiler", "sözlük"]):
+                    continue
+            temiz_adaylar.append(d)
+        if temiz_adaylar:
+            adaylar = temiz_adaylar
 
         # 3-gram Türkçe Lexical Reranking Uygula (d6_01_rerank mantığı)
         if rerank and lexical_rerank and len(adaylar) > 1:
@@ -404,60 +446,85 @@ class RAGMotoru:
         """
         Getirilen bir ders kitabı parçasının (chunk), sahnenin temel konusu, görsel unsurları
         ve alt kavramları ile anlamsal ilgisini değerlendirir.
+        Türkçe kelime sınırlarına duyarlı regex arama kullanır (morfolojik alt string hatalarını önler).
         Alakasız veya konu dışı parçaları eler (örn: Pil/oyuncak araba konusundayken baraj/santral chunk'ı).
         """
-        c_text = (doc.page_content or "").lower()
+        c_text = doc.page_content or ""
         meta = doc.metadata or {}
-        konu_meta = f"{meta.get('unite', '')} {meta.get('konu', '')} {meta.get('alt_konu', '')}".lower()
+        konu_meta = f"{meta.get('unite', '')} {meta.get('konu', '')} {meta.get('alt_konu', '')}"
         full_doc = f"{c_text} {konu_meta}"
+
+        def _kelimelere_ayir(m: str) -> set:
+            if not m:
+                return set()
+            m_clean = m.replace("İ", "i").replace("I", "ı").lower()
+            return set(re.findall(r"\b[a-zçğıöşü0-9]+\b", m_clean))
+
+        def _var_mi(aranan: str, tokens: set, metin_lower: str) -> bool:
+            a_clean = aranan.replace("İ", "i").replace("I", "ı").lower().strip()
+            if not a_clean:
+                return False
+            if " " in a_clean:
+                pat = r"\b" + re.escape(a_clean) + r"\b"
+                return bool(re.search(pat, metin_lower))
+            return a_clean in tokens
+
+        full_tokens = _kelimelere_ayir(full_doc)
+        full_doc_lower = full_doc.replace("İ", "i").replace("I", "ı").lower()
+        c_text_lower = c_text.replace("İ", "i").replace("I", "ı").lower()
 
         temel = (temel_konu or "").lower()
         kavramlar = [k.lower() for k in (alt_kavramlar or [])]
         tr_snippet = (transkript or "")[:300].lower()
 
-        puan = 0.0
+        konu_uygunluk_skoru = 0.0
         pozitif_nedenler = []
         negatif_nedenler = []
 
-        # 1. Konu ve Alt Kavram Eşleşmesi
+        # 1. Konu ve Alt Kavram Eşleşmesi (Kelime sınırlarına duyarlı)
         for k in kavramlar:
-            if k in full_doc:
-                puan += 2.0
+            if _var_mi(k, full_tokens, full_doc_lower):
+                konu_uygunluk_skoru += 2.0
                 pozitif_nedenler.append(f"Kavram: '{k}'")
 
+        # 2. Odak Alanı Değerlendirmesi
         if "pil" in temel or any("pil" in k for k in kavramlar) or "oyuncak" in tr_snippet:
             pil_terimleri = ["pil", "fener", "oyuncak", "kumanda", "küçük araç", "taşınabilir", "batarya", "atık pil"]
-            if "duvar saati" in full_doc or "kol saati" in full_doc or "çalar saat" in full_doc or ("saat" in full_doc and "saat yön" not in full_doc and "saatte" not in full_doc and "saatler" not in full_doc):
+            # 'saat' kelimesini sadece elektrik/cihaz bağlamında kabul et ('saat yönünde', 'saatte' elenir)
+            if any(_var_mi(s, full_tokens, full_doc_lower) for s in ["duvar saati", "kol saati", "çalar saat"]):
                 pil_terimleri.append("saat")
-            eslesen_pil = [t for t in pil_terimleri if t in full_doc]
-            if "saat" in eslesen_pil and not any(w in full_doc for w in ["pil", "elektrik", "batarya", "enerji", "cihaz"]):
-                eslesen_pil.remove("saat")
+            elif _var_mi("saat", full_tokens, full_doc_lower) and not any(sw in full_doc_lower for sw in ["saat yönü", "saatte", "saatler"]):
+                if any(_var_mi(w, full_tokens, full_doc_lower) for w in ["pil", "elektrik", "batarya", "enerji", "cihaz"]):
+                    pil_terimleri.append("saat")
+
+            eslesen_pil = [t for t in pil_terimleri if _var_mi(t, full_tokens, full_doc_lower)]
             if eslesen_pil:
-                puan += 2.0 * len(eslesen_pil)
+                konu_uygunluk_skoru += 2.0 * len(eslesen_pil)
                 pozitif_nedenler.append(f"Pil/cihaz terimleri: {', '.join(eslesen_pil[:3])}")
 
             santral_terimleri = ["baraj", "hidroelektrik", "termik santral", "yüksek gerilim", "şebeke teli"]
-            eslesen_santral = [s for s in santral_terimleri if s in full_doc]
-            if eslesen_santral and not ("pil" in c_text or "el feneri" in c_text):
-                puan -= 5.0
+            eslesen_santral = [s for s in santral_terimleri if _var_mi(s, full_tokens, full_doc_lower)]
+            if eslesen_santral and not (_var_mi("pil", full_tokens, c_text_lower) or _var_mi("el feneri", full_tokens, c_text_lower)):
+                konu_uygunluk_skoru -= 5.0
                 negatif_nedenler.append(f"Konu dışı santral/baraj içeriği: {', '.join(eslesen_santral[:3])}")
         elif "şehir elektriği" in temel or "santral" in temel:
-            if any(t in full_doc for t in ["santral", "şehir elektriği", "baraj", "priz", "fırın", "çamaşır makinesi"]):
-                puan += 3.0
+            if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["santral", "şehir elektriği", "baraj", "priz", "fırın", "çamaşır makinesi"]):
+                konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Şehir elektriği / santral içeriği")
         elif "akü" in temel or "taşıt" in temel or "otomobil" in tr_snippet:
-            if any(t in full_doc for t in ["akü", "otomobil", "motor", "taşıt", "araç"]):
-                puan += 3.0
+            if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["akü", "otomobil", "motor", "taşıt", "araç"]):
+                konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Akü ve motorlu taşıt içeriği")
         elif "batarya" in temel or "şarj" in temel or "telefon" in tr_snippet:
-            if any(t in full_doc for t in ["batarya", "şarj", "telefon", "bilgisayar", "tablet"]):
-                puan += 3.0
+            if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["batarya", "şarj", "telefon", "bilgisayar", "tablet"]):
+                konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Batarya ve şarj edilebilir cihaz içeriği")
 
-        if any(w in full_doc for w in ["elektrik", "enerji", "araç", "gereç"]):
-            puan += 1.0
+        if any(_var_mi(w, full_tokens, full_doc_lower) for w in ["elektrik", "enerji", "araç", "gereç"]):
+            konu_uygunluk_skoru += 1.0
 
-        gecerli = puan >= 1.5
+        gecerli = konu_uygunluk_skoru >= 1.5
+        kaynak_destek_durumu = "tam_destekli" if konu_uygunluk_skoru >= 4.0 else ("kismi_destekli" if gecerli else "destek_yok")
         gerekce = (
             f"Kabul edildi: {'; '.join(pozitif_nedenler)}"
             if gecerli
@@ -466,7 +533,10 @@ class RAGMotoru:
 
         return {
             "gecerli": gecerli,
-            "puan": round(puan, 2),
+            "puan": round(konu_uygunluk_skoru, 2),
+            "vektor_skoru": 1.0,
+            "konu_uygunluk_skoru": round(konu_uygunluk_skoru, 2),
+            "kaynak_destek_durumu": kaynak_destek_durumu,
             "gerekce": gerekce
         }
 

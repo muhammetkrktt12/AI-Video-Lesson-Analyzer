@@ -24,6 +24,8 @@ _custom_db_dir = os.getenv("EDUFRAME_CHROMA_DB_DIR")
 if _custom_db_dir:
     _custom_path = Path(_custom_db_dir)
     CHROMA_DB_DIR = _custom_path if _custom_path.is_absolute() else (ROOT / _custom_path)
+elif CHROMA_DB_V2_DIR.exists():
+    CHROMA_DB_DIR = CHROMA_DB_V2_DIR
 else:
     CHROMA_DB_DIR = CHROMA_DB_V1_DIR
 
@@ -45,9 +47,10 @@ DEFAULT_SEVIYE = "İlkokul"
 
 # --- GOOGLE GEMINI API AYARLARI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "20"))
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash,gemini-flash-latest").split(",") if m.strip()]
 _gemini_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-lite-latest,gemini-3.8-flash,gemini-flash-latest")
 GEMINI_FALLBACK_MODELS = [m.strip() for m in _gemini_fallbacks.split(",") if m.strip()]
 

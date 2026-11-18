@@ -483,54 +483,23 @@ SADECE aşağıdaki JSON nesnesini döndür:
         transkript: str,
         bolum_basligi: str,
     ) -> Dict[str, Any]:
-        """Yapay zeka erişilemediğinde kural tabanlı nesnel görsel bağlam oluşturur (başarısızlığı gizlemeden)."""
-        metin = f"{bolum_basligi} {transkript}".lower()
-
-        if "araba" in metin or "kumanda" in metin or "oyuncak" in metin:
-            unsurlar = ["Uzaktan kumandalı oyuncak araba", "Kumanda cihazı", "Çocuk figürü", "Hareket/titreşim simgeleri"]
-            aciklama = "Görselde elinde uzaktan kumanda tutan bir çocuk ve yerde antenli, pille çalışan oyuncak araba illüstrasyonu yer almaktadır."
-            uyum = {"uyumlu_mu": True, "derece": "tam_uyumlu", "gerekce": "Transkriptte anlatılan uzaktan kumandalı oyuncak araba ve pil enerjisiyle çalışma senaryosu görselle birebir örtüşmektedir."}
-            temel_konu = "Elektrik Kaynakları ve Pilin Önemi"
-            alt_kavramlar = ["Pil", "Elektrik enerjisi", "Hareket enerjisi", "Enerji kaynağı"]
-        elif "şehir elektriği" in metin or "santral" in metin or "baraj" in metin:
-            unsurlar = ["Elektrik santrali şeması", "İletim telleri ve direkleri", "Duvar prizi", "Büyük ev aletleri (buzdolabı, televizyon)"]
-            aciklama = "Baraj ve santrallerde üretilen elektriğin iletim hatlarıyla yerleşim yerlerine ve ev prizlerine iletilmesini gösteren şematik eğitim çizimi."
-            uyum = {"uyumlu_mu": True, "derece": "tam_uyumlu", "gerekce": "Transkriptte ifade edilen santraller ve şehir elektriği ile çalışan yüksek enerjili ev eşyaları görselde açıklanmaktadır."}
-            temel_konu = "Şehir Elektriği ve Santraller"
-            alt_kavramlar = ["Şehir elektriği", "Elektrik santrali", "Priz bağlantısı", "Yüksek gerilim"]
-        elif "batarya" in metin or "şarj" in metin:
-            unsurlar = ["Akıllı cep telefonu", "Dizüstü bilgisayar", "Tablet", "Şarj aleti ve batarya doluluk göstergesi"]
-            aciklama = "Şarj edilebilir batarya ile çalışan ve priz bağlantısı olmadan taşınabilir kullanım sunan elektronik cihazları gösteren illüstrasyon."
-            uyum = {"uyumlu_mu": True, "derece": "tam_uyumlu", "gerekce": "Transkriptte ele alınan bataryanın şarj edilebilirlik özelliği ve taşınabilir akıllı cihazlar görselle uyumludur."}
-            temel_konu = "Batarya ve Şarj Edilebilir Cihazlar"
-            alt_kavramlar = ["Batarya", "Şarj etme", "Taşınabilir teknoloji"]
-        elif "akü" in metin or "otomobil" in metin or "ulaşım" in metin:
-            unsurlar = ["Otomobil", "Otobüs", "Uçak", "Akü (akümülatör) kutusu"]
-            aciklama = "Motorlu kara, deniz ve hava taşıtlarının motorunu çalıştırmak için kullanılan akü sistemini gösteren eğitim şeması."
-            uyum = {"uyumlu_mu": True, "derece": "tam_uyumlu", "gerekce": "Transkriptteki motorlu taşıtlar ve akü donanımı görsel unsurlarıyla örtüşmektedir."}
-            temel_konu = "Akü (Akümülatör) ve Ulaşım Araçları"
-            alt_kavramlar = ["Akü", "Ulaşım araçları", "Motor ilk hareketi"]
-        elif "pil" in metin or "saat" in metin or "fener" in metin:
-            unsurlar = ["Farklı boyutlarda piller (kalem pil, saat pili)", "El feneri", "Duvar saati", "Atık pil kutusu"]
-            aciklama = "Küçük taşınabilir aletleri çalıştıran pilleri ve biten pillerin toprağa zarar vermemesi için atık pil kutusuna atılması gerektiğini gösteren çizim."
-            uyum = {"uyumlu_mu": True, "derece": "tam_uyumlu", "gerekce": "Transkriptteki pille çalışan araçlar ve atık pil geri dönüşüm bilinci görselle örtüşmektedir."}
-            temel_konu = "Pil ve Pille Çalışan Araçlar"
-            alt_kavramlar = ["Pil", "Atık pil kutusu", "Taşınabilir enerji"]
-        else:
-            unsurlar = [bolum_basligi]
-            aciklama = f"'{bolum_basligi}' konusunu somutlaştıran ders anlatım görseli."
-            uyum = {"uyumlu_mu": True, "derece": "kismi_uyumlu", "gerekce": "Bölüm başlığı ve konuşma içeriği kural tabanlı olarak ilişkilendirilmiştir."}
-            temel_konu = bolum_basligi
-            alt_kavramlar = ["Elektrikli araçlar"]
-
+        """
+        Yapay zeka görme modeli erişilemediğinde veya başarısız olduğunda çağrılır.
+        Transkript kelimelerine bakarak hayali görsel nesneler uydurmaz.
+        Görsel pikselleri incelenemediği için durumu dürüstçe raporlar.
+        """
         return {
-            "gorsel_unsurlar": unsurlar,
-            "gorsel_aciklamasi": aciklama,
-            "gorsel_konusma_uyumu": uyum,
-            "temel_konu": temel_konu,
-            "alt_kavramlar": alt_kavramlar,
-            "gorsel_analiz_kaynagi": "fallback_heuristic",
-            "resim_yolu": str(resim_yolu),
+            "gorsel_unsurlar": [],
+            "gorsel_aciklamasi": "Görsel model erişilemediği için görüntü içeriği doğrulanamadı.",
+            "gorsel_konusma_uyumu": {
+                "uyumlu_mu": None,
+                "derece": "belirsiz",
+                "gerekce": "Görüntü pikselleri incelenemediği için görsel ve konuşma uyumu doğrulanamadı."
+            },
+            "temel_konu": bolum_basligi,
+            "alt_kavramlar": [],
+            "gorsel_analiz_kaynagi": "dogrulanamadi",
+            "resim_yolu": str(resim_yolu or ""),
             "zaman_damgasi": zaman_damgasi
         }
 
@@ -1219,7 +1188,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "Görselde görülen uzaktan kumandalı mavi oyuncak araba, taşınabilir elektrikli araçların çalışma mantığını somut bir şekilde açıklamaktadır. "
                         "Kumandadaki tuşlara basıldığında anten aracılığıyla arabaya iletilen sinyaller, arabanın içindeki pilden elektrik enerjisi çekilmesini sağlar. "
                         "Pilden sağlanan bu elektrik enerjisi, küçük elektrik motoru vasıtasıyla mekanik hareket enerjisine dönüştürülerek tekerlekleri döndürür ve aracın yerde hızla ilerlemesini sağlar.<br/><br/>"
-                        "Pilin kimyasal deposu tükendiğinde elektrik devresi kesilir, motor durur ve araç hareket edemez hale gelir. "
+                        "Pildeki kimyasal enerji tükendiğinde, pilin uçları arasındaki gerilim (potansiyel fark) düşer ve devreden geçen elektrik akımı yetersiz kalarak sıfırlanır; motor durur ve araç hareket edemez hale gelir. Devre fiziksel olarak kopmaz, kimyasal tepkimeler durduğu için akım kesilir. "
                         "Bu durum, elektrikli araçların çalışabilmesi için kesintisiz bir enerji kaynağına gereksinim duyduğunu ve pille çalışan aletlerin priz bağlantısına ihtiyaç duymadan taşınabilir kolaylık sunduğunu açıkça ortaya koyar. "
                         "Ders kitabında vurgulandığı üzere el feneri ve duvar saati gibi düşük enerji tüketen aygıtlar da benzer biçimde pil enerjisiyle güvenle çalıştırılır."
                     ),
@@ -1227,7 +1196,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "Görselde görülen uzaktan kumandalı mavi oyuncak araba, taşınabilir elektrikli araçların çalışma mantığını somut bir şekilde açıklamaktadır. "
                         "Kumandadaki tuşlara basıldığında anten aracılığıyla arabaya iletilen sinyaller, arabanın içindeki pilden elektrik enerjisi çekilmesini sağlar. "
                         "Pilden sağlanan bu elektrik enerjisi, küçük elektrik motoru vasıtasıyla mekanik hareket enerjisine dönüştürülerek tekerlekleri döndürür ve aracın yerde hızla ilerlemesini sağlar.<br/><br/>"
-                        "Pilin kimyasal deposu tükendiğinde elektrik devresi kesilir, motor durur ve araç hareket edemez hale gelir. "
+                        "Pildeki kimyasal enerji tükendiğinde, pilin uçları arasındaki gerilim (potansiyel fark) düşer ve devreden geçen elektrik akımı yetersiz kalarak sıfırlanır; motor durur ve araç hareket edemez hale gelir. Devre fiziksel olarak kopmaz, kimyasal tepkimeler durduğu için akım kesilir. "
                         "Bu durum, elektrikli araçların çalışabilmesi için kesintisiz bir enerji kaynağına gereksinim duyduğunu ve pille çalışan aletlerin priz bağlantısına ihtiyaç duymadan taşınabilir kolaylık sunduğunu açıkça ortaya koyar. "
                         "Ders kitabında vurgulandığı üzere el feneri ve duvar saati gibi düşük enerji tüketen aygıtlar da benzer biçimde pil enerjisiyle güvenle çalıştırılır."
                     ),
@@ -1251,7 +1220,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "onemli_kavramlar": [
                         {
                             "kavram": "Pil",
-                            "aciklama": "Düşük miktarda elektrik enerjisi üreten, hafif ve taşınabilir küçük kimyasal enerji deposudur. İçerisindeki kimyasal maddelerin tepkimesiyle elektrik akımı oluşturarak bağlı olduğu devreyi besler. Bittiğinde çevre kirliliğini önlemek amacıyla çöpe değil, atık pil toplama kutularına atılmalıdır."
+                            "aciklama": "Düşük miktarda elektrik enerjisi üreten, hafif ve taşınabilir küçük kimyasal enerji deposudur. İçerisindeki kimyasal maddelerin tepkimesiyle elektrik akımı oluşturarak bağlı olduğu devreyi besler. Piller genellikle tek kullanımlık (primer) olarak bilinse de şarj edilebilen (sekonder) türleri de mevcuttur. Bittiğinde çevre kirliliğini önlemek amacıyla çöpe değil, atık pil toplama kutularına atılmalıdır."
                         },
                         {
                             "kavram": "Elektrik Enerjisi",
@@ -1269,7 +1238,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "bolum_basligi": "Bölüm 3 – 1. Elektrik Kaynağı: Şehir Elektriği ve Santraller",
                     "zaman_araligi": {
                         "baslangic": "01:25",
-                        "bitis": "02:20",
+                        "bitis": "02:45",
                         "kare_zamani": 116.0
                     },
                     "transkript": (
@@ -1291,36 +1260,11 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                 },
                 {
                     "bolum_no": 4,
-                    "bolum_basligi": "Bölüm 4 – 2. Elektrik Kaynağı: Pil ve Pille Çalışan Araçlar",
+                    "bolum_basligi": "Bölüm 4 – Pekiştirme Sorusu 1: Şehir Elektriğiyle Çalışan Araçlar",
                     "zaman_araligi": {
-                        "baslangic": "03:20",
-                        "bitis": "04:00",
+                        "baslangic": "02:45",
+                        "bitis": "03:30",
                         "kare_zamani": 220.0
-                    },
-                    "transkript": (
-                        "İkinci elektrik kaynağımız: Pil! Daha az enerji harcayan araç gereçleri çalıştırmak için kullanılır. "
-                        "Piller daha az enerji depolar. Farklı büyüklükte ve güçte piller vardır; saat pili, kalem pil, yassı pil gibi. "
-                        "Pille çalışan araçlar: radyo, el feneri, uzaktan kumandalı araba ve duvar saatleridir."
-                    ),
-                    "duzenlenmis_anlatim": (
-                        "Pil, az miktarda elektrik enerjisi tüketen küçük ve taşınabilir araçların çalıştırılmasında kullanılan bir elektrik kaynağıdır. "
-                        "Kalem pil, yassı pil ve saat pili gibi farklı boyut ve güçlerde üretilir. Duvar saatleri, el fenerleri, uzaktan kumandalar ve oyuncaklar pille çalışır.<br/><br/>"
-                        "Tükenen pillerin içeriğindeki kimyasal maddelerin çevreye zarar vermemesi için çöpe veya doğaya atılmaması gerekir. "
-                        "Kullanım ömrü biten piller atık pil toplama kutularına bırakılmalıdır."
-                    ),
-                    "onemli_kavramlar": [
-                        {"kavram": "Pil", "aciklama": "Az miktarda elektrik üreten, kolay taşınabilen küçük enerji kaynağıdır."},
-                        {"kavram": "Atık Pil Kutusu", "aciklama": "Biten pillerin toprağa ve suya zarar vermemesi için toplandığı özel geri dönüşüm kutusudur."}
-                    ],
-                    "kitap_referansi": "MEB 3. Sınıf Fen Bilimleri (2. Kitap) - 6. Ünite: Yaşamımızı Kolaylaştıran Elektrik, 'Elektrikli Araç Gerecin Güvenli Kullanımı' (Sayfa 58)"
-                },
-                {
-                    "bolum_no": 5,
-                    "bolum_basligi": "Bölüm 5 – Şehir Elektriği Pekiştirme Soru Uygulaması",
-                    "zaman_araligi": {
-                        "baslangic": "04:00",
-                        "bitis": "04:45",
-                        "kare_zamani": 242.0
                     },
                     "transkript": (
                         "Şimdi tahtadaki sorumuza bakalım: Yukarıdaki araç ve gereçlerden kaç tanesi şehir elektriğiyle çalışır? "
@@ -1328,9 +1272,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "fişini prize taktığımız için şehir elektriğiyle çalışır. Yani sadece 1 tanesi! Doğru cevabımız A seçeneğidir."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Elektrikli araçların enerji kaynakları belirlenirken çalışma gereksinimleri dikkate alınır. "
+                        "Elektrikli araçların enerji kaynakları belirlenirken çalışma gereksinimleri ve güç tüketimleri dikkate alınır. "
                         "El feneri taşınabilir küçük pil ile çalışırken, cep telefonu şarj edilebilir batarya kullanır.<br/><br/>"
-                        "Televizyon ise yüksek elektrik gücü gerektirdiğinden doğrudan şehir elektriğine bağlı prizden enerji alır. "
+                        "Televizyon ise yüksek elektrik gücü gerektirdiğinden doğrudan şehir elektriğine bağlı duvar prizinden enerji alır. "
                         "Bu nedenle incelenen araçlar arasında yalnızca televizyon şehir elektriğiyle çalışır (Doğru Yanıt: A seçeneği)."
                     ),
                     "onemli_kavramlar": [
@@ -1340,10 +1284,35 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "kitap_referansi": "MEB 3. Sınıf Fen Bilimleri (2. Kitap) - 6. Ünite: Yaşamımızı Kolaylaştıran Elektrik, 'Elektrikli Araç Gereç' (Sayfa 48)"
                 },
                 {
-                    "bolum_no": 6,
-                    "bolum_basligi": "Bölüm 6 – Pille Çalışan Araçlar Değerlendirme Sorusu",
+                    "bolum_no": 5,
+                    "bolum_basligi": "Bölüm 5 – 2. Elektrik Kaynağı: Pil ve Pille Çalışan Araçlar",
                     "zaman_araligi": {
-                        "baslangic": "04:45",
+                        "baslangic": "03:30",
+                        "bitis": "04:30",
+                        "kare_zamani": 242.0
+                    },
+                    "transkript": (
+                        "İkinci elektrik kaynağımız: Pil! Daha az enerji harcayan araç gereçleri çalıştırmak için kullanılır. "
+                        "Piller daha az enerji depolar. Farklı büyüklükte ve güçte piller vardır; saat pili, kalem pil, yassı pil gibi. "
+                        "Pille çalışan araçlar: radyo, el feneri, uzaktan kumandalı araba ve duvar saatleridir."
+                    ),
+                    "duzenlenmis_anlatim": (
+                        "Pil, az miktarda elektrik enerjisi tüketen küçük ve taşınabilir araçların çalıştırılmasında kullanılan güvenli bir elektrik kaynağıdır. "
+                        "Kalem pil, yassı pil ve saat pili gibi farklı boyut ve güçlerde üretilir. Duvar saatleri, el fenerleri, uzaktan kumandalar ve oyuncaklar pille çalışır.<br/><br/>"
+                        "Piller genellikle tek kullanımlık (primer) türde olup şarj edilebilir (sekonder) türleri de mevcuttur. "
+                        "Tükenen pillerin içeriğindeki kimyasal maddelerin çevreye zarar vermemesi için çöpe veya doğaya atılmaması, mutlaka atık pil toplama kutularına bırakılması gerekir."
+                    ),
+                    "onemli_kavramlar": [
+                        {"kavram": "Pil", "aciklama": "Az miktarda elektrik üreten, kolay taşınabilen küçük enerji kaynağıdır."},
+                        {"kavram": "Atık Pil Kutusu", "aciklama": "Biten pillerin toprağa ve suya zarar vermemesi için toplandığı özel geri dönüşüm kutusudur."}
+                    ],
+                    "kitap_referansi": "MEB 3. Sınıf Fen Bilimleri (2. Kitap) - 6. Ünite: Yaşamımızı Kolaylaştıran Elektrik, 'Elektrikli Araç Gerecin Güvenli Kullanımı' (Sayfa 58)"
+                },
+                {
+                    "bolum_no": 6,
+                    "bolum_basligi": "Bölüm 6 – Pekiştirme Sorusu 2: Pille Çalışan Araçlar Değerlendirme Sorusu",
+                    "zaman_araligi": {
+                        "baslangic": "04:30",
                         "bitis": "05:25",
                         "kare_zamani": 290.0
                     },
@@ -1355,7 +1324,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "duzenlenmis_anlatim": (
                         "Pille çalışan araçlar, az miktarda elektrik enerjisiyle uzun süre çalışabilen taşınabilir cihazlardır. "
                         "El feneri, televizyon kumandası ve duvar saati elektrik kaynağı olarak pil kullanır.<br/><br/>"
-                        "Buna karşılık cep telefonu şarj edilebilir bataryayla, ütü şehir elektriğiyle, otomobil ve uçak gibi motorlu taşıtlar ise aküyle çalışır. "
+                        "Buna karşılık cep telefonu şarj edilebilir bataryayla, ütü şehir elektriğiyle, otomobil ve uçak gibi motorlu taşıtlar ise ilk marş hareketi ve elektrik donanımı için aküyle çalışır. "
                         "Bu doğrultuda pille çalışan araçlar el feneri, kumanda ve duvar saatidir (Doğru Yanıt: C seçeneği)."
                     ),
                     "onemli_kavramlar": [
@@ -1370,7 +1339,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "zaman_araligi": {
                         "baslangic": "05:25",
                         "bitis": "06:10",
-                        "kare_zamani": 346.0
+                        "kare_zamani": 336.0
                     },
                     "transkript": (
                         "Üçüncü kaynağımız bataryadır. Batarya; birden fazla pilin bir araya gelmesiyle oluşur. En önemli özelliği "
@@ -1379,8 +1348,8 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     ),
                     "duzenlenmis_anlatim": (
                         "Batarya; birden fazla pil hücresinin bir araya getirilmesiyle oluşturulan güçlü bir elektrik kaynağıdır. "
-                        "Bataryanın en önemli özelliği, enerjisi tükendiğinde priz bağlantısı üzerinden şarj edilerek tekrar kullanılabilmesidir.<br/><br/>"
-                        "Dizüstü bilgisayarlar, akıllı telefonlar, tabletler ve telsizler batarya ile çalışarak priz bağlantısı olmadan taşınabilir kullanım imkânı sunar."
+                        "Bataryanın en önemli özelliği, enerjisi tükendiğinde şarj adaptörü ve priz bağlantısı üzerinden yeniden doldurularak defalarca kullanılabilmesidir.<br/><br/>"
+                        "Dizüstü bilgisayarlar, akıllı telefonlar, tabletler ve telsizler batarya ile çalışarak priz bağlantısına bağımlı kalmadan taşınabilir kullanım imkânı sunar."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Batarya", "aciklama": "Şarj edilebilen ve pilden daha uzun süre elektrik sağlayan kaynaktır."},
@@ -1393,7 +1362,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "bolum_basligi": "Bölüm 8 – 4. Elektrik Kaynağı: Akü (Akümülatör) ve Ulaşım Araçları",
                     "zaman_araligi": {
                         "baslangic": "06:10",
-                        "bitis": "07:15",
+                        "bitis": "06:55",
                         "kare_zamani": 376.0
                     },
                     "transkript": (
@@ -1403,13 +1372,13 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     ),
                     "duzenlenmis_anlatim": (
                         "Akü (akümülatör); otomobil, otobüs, kamyon, uçak ve gemi gibi motorlu ulaşım araçlarında kullanılan büyük ve güçlü bir elektrik kaynağıdır. "
-                        "Taşıtların motorunu ilk çalıştırma anında harekete geçirir.<br/><br/>"
-                        "Ayrıca aracın farları, radyosu, kliması ve silecekleri gibi elektrikli donanımları için enerji sağlar. "
-                        "Araç hareket ettikçe motorun çalışma gücüyle akü otomatik olarak şarj edilir."
+                        "Ulaşım araçlarının ana hareket enerjisi yakıt motorlarından veya elektrikli taşıtlarda ana çekiş bataryasından sağlanır; akü ise motorun ilk marş hareketini başlatır.<br/><br/>"
+                        "Ayrıca akü, aracın farları, radyosu, kliması ve silecekleri gibi elektrik donanımlarını besler. "
+                        "Taşıt hareket halindeyken motorun mekanik gücü alternatör (şarj dinamosu) vasıtasıyla elektrik enerjisine dönüştürülür ve akü bu sayede sürekli şarj edilir."
                     ),
                     "onemli_kavramlar": [
-                        {"kavram": "Akü (Akümülatör)", "aciklama": "Arabaların ve otobüslerin motorunu çalıştıran güçlü elektrik kaynağıdır."},
-                        {"kavram": "Ulaşım Araçları", "aciklama": "İnsan ve eşya taşıyan motorlu kara, deniz ve hava taşıtlarıdır."}
+                        {"kavram": "Akü (Akümülatör)", "aciklama": "Arabaların ve otobüslerin motorunu ilk çalıştıran ve elektrik donanımını besleyen güçlü kaynaktır."},
+                        {"kavram": "Ulaşım Araçlarında Enerji", "aciklama": "Taşıtlarda ana hareket motorlarla sağlanırken, ilk marş ve elektrik aksamı akü ile desteklenir."}
                     ],
                     "kitap_referansi": "MEB 3. Sınıf Fen Bilimleri (2. Kitap) - 6. Ünite: Yaşamımızı Kolaylaştıran Elektrik, 'Elektrikli Araç Gereç' (Sayfa 44)"
                 },
@@ -1417,8 +1386,8 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "bolum_no": 9,
                     "bolum_basligi": "Bölüm 9 – Genel Tekrar ve Elektrik Kaynakları Eşleştirme Tablosu",
                     "zaman_araligi": {
-                        "baslangic": "06:45",
-                        "bitis": "07:15",
+                        "baslangic": "06:55",
+                        "bitis": "07:45",
                         "kare_zamani": 415.0
                     },
                     "transkript": (
@@ -1430,7 +1399,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "duzenlenmis_anlatim": (
                         "Dört temel elektrik kaynağı (şehir elektriği, pil, batarya, akü) araçların kullanım amaçlarına ve güç ihtiyaçlarına göre belirlenir. "
                         "Yüksek güç tüketen sabit ev aletleri şehir elektriğine, küçük taşınabilir araçlar pillere bağlanır.<br/><br/>"
-                        "Şarj edilebilir akıllı cihazlar bataryadan, motorlu ulaşım taşıtları ise aküden elektrik sağlar. "
+                        "Şarj edilebilir akıllı cihazlar bataryadan, motorlu ulaşım taşıtları ise motor ilk hareketi ve donanım için aküden elektrik sağlar. "
                         "Böylece her cihaz ihtiyacına en uygun enerji kaynağı ile güvenli şekilde çalışır."
                     ),
                     "onemli_kavramlar": [
@@ -1443,9 +1412,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                     "bolum_no": 10,
                     "bolum_basligi": "Bölüm 10 – Öğrendiklerimiz Özeti ve Ders Sonu Değerlendirmesi",
                     "zaman_araligi": {
-                        "baslangic": "07:18",
+                        "baslangic": "07:45",
                         "bitis": "08:34",
-                        "kare_zamani": 510.0
+                        "kare_zamani": 480.0
                     },
                     "transkript": (
                         "Evet sevgili öğrenciler, bu dersimizde elektrik kaynaklarının neler olduğunu, şehir elektriği, pil, batarya ve akünün "

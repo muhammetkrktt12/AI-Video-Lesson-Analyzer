@@ -725,7 +725,7 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         self.assertFalse(res_yok["gorsel_konusma_uyumu"]["uyumlu_mu"])
 
     # -----------------------------------------------------------------------
-    # SENARYO 20: Görsel–Konuşma Uyum Denetimi ve Gerekçelendirme
+    # SENARYO 20: Görsel Model Başarısızlığında Dürüst Raporlama (Uydurma Nesne Yasağı)
     # -----------------------------------------------------------------------
     def test_scenario_20_visual_speech_alignment_verification(self):
         analyzer = GeminiAnalyzer(api_key="")
@@ -737,10 +737,11 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         )
         self.assertIn("gorsel_konusma_uyumu", res)
         uyum = res["gorsel_konusma_uyumu"]
-        self.assertTrue(uyum["uyumlu_mu"])
-        self.assertEqual(uyum["derece"], "tam_uyumlu")
-        self.assertIn("pil", uyum["gerekce"].lower())
-        self.assertEqual(res["gorsel_analiz_kaynagi"], "fallback_heuristic")
+        self.assertIsNone(uyum["uyumlu_mu"])
+        self.assertEqual(uyum["derece"], "belirsiz")
+        self.assertEqual(res["gorsel_unsurlar"], [])
+        self.assertEqual(res["gorsel_analiz_kaynagi"], "dogrulanamadi")
+        self.assertIn("doğrulanamadı", res["gorsel_aciklamasi"].lower())
 
     # -----------------------------------------------------------------------
     # SENARYO 21: Çok Yönlü RAG Arama ve Uygunluk Filtresi (Alakasız Parça Eleme)

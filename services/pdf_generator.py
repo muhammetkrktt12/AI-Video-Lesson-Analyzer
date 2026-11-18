@@ -420,7 +420,12 @@ class PDFGenerator:
                             "kullanildigi_yerler": set(),
                         }
                     kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
-            elif b_ref and b_ref != "MEB Ders Kitabı Referansı":
+            elif b_ref and b_ref.strip().lower() not in [
+                "meb ders kitabı referansı",
+                "doğrulanmış rag eşleşmesi bulunamadı",
+                "doğrulanmış ders kitabı kaynağı bulunamadı",
+                "meb 3. sınıf fen bilimleri"
+            ]:
                 key = b_ref.strip().lower()
                 if key not in kaynak_havuzu:
                     kaynak_havuzu[key] = {
@@ -458,7 +463,12 @@ class PDFGenerator:
                         "kullanildigi_yerler": set(),
                     }
                 kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
-            elif s_ref and s_ref not in ["MEB Ders Kitabı Referansı", "Doğrulanmış ders kitabı kaynağı bulunamadı", "MEB 3. Sınıf Fen Bilimleri"]:
+            elif s_ref and s_ref.strip().lower() not in [
+                "meb ders kitabı referansı",
+                "doğrulanmış rag eşleşmesi bulunamadı",
+                "doğrulanmış ders kitabı kaynağı bulunamadı",
+                "meb 3. sınıf fen bilimleri"
+            ]:
                 key = s_ref.strip().lower()
                 if key not in kaynak_havuzu:
                     kaynak_havuzu[key] = {
@@ -659,55 +669,58 @@ class PDFGenerator:
             flowables.append(ozet_box)
             flowables.append(Spacer(1, 14))
 
-        # 4 Temel Elektrik Kaynağının Karşılaştırma Tablosu
-        flowables.append(Paragraph("<b>4 Temel Elektrik Kaynağı Karşılaştırma Tablosu</b>", self.style_section_title))
-        flowables.append(Spacer(1, 6))
+        # 4 Temel Elektrik Kaynağının Karşılaştırma Tablosu (Yalnızca konu elektrik kaynakları olduğunda eklenir)
+        unite_lower = str(unite_basligi).lower()
+        bolumler_str = " ".join([b.get("bolum_basligi", "") for b in bolumler]).lower()
+        if any(w in unite_lower or w in bolumler_str for w in ["kaynak", "şehir elektriği", "pil", "batarya", "akü"]):
+            flowables.append(Paragraph("<b>4 Temel Elektrik Kaynağı Karşılaştırma Tablosu</b>", self.style_section_title))
+            flowables.append(Spacer(1, 6))
 
-        tablo_verisi = [
-            [
-                Paragraph("<b>Elektrik Kaynağı</b>", self.style_table_header),
-                Paragraph("<b>Tanım ve Güç Seviyesi</b>", self.style_table_header),
-                Paragraph("<b>Örnek Kullanım Alanları</b>", self.style_table_header),
-                Paragraph("<b>Şarj / Değişim</b>", self.style_table_header),
-            ],
-            [
-                Paragraph("<b>1. Şehir Elektriği</b>", self.style_table_cell_bold),
-                Paragraph("Santrallerde (baraj, rüzgâr, termik) üretilen çok yüksek enerjili elektrik.", self.style_table_cell),
-                Paragraph("Buzdolabı, çamaşır makinesi, fırın, televizyon, ütü (Sabit büyük ev aletleri).", self.style_table_cell),
-                Paragraph("Prizden kesintisiz aktarılır.", self.style_table_cell),
-            ],
-            [
-                Paragraph("<b>2. Pil</b>", self.style_table_cell_bold),
-                Paragraph("Küçük kimyasal enerji deposu. Düşük enerjilidir ve hafiftir.", self.style_table_cell),
-                Paragraph("Duvar saati, televizyon kumandası, el feneri, uzaktan kumandalı oyuncak.", self.style_table_cell),
-                Paragraph("Tek kullanımlık (Atık pil kutusuna atılır).", self.style_table_cell),
-            ],
-            [
-                Paragraph("<b>3. Batarya</b>", self.style_table_cell_bold),
-                Paragraph("Birden fazla pilin bir araya gelmesiyle oluşan güçlü depolama kaynağı.", self.style_table_cell),
-                Paragraph("Cep telefonu, tablet, dizüstü bilgisayar, telsiz, ışıldak.", self.style_table_cell),
-                Paragraph("Şarj aletiyle defalarca doldurulabilir.", self.style_table_cell),
-            ],
-            [
-                Paragraph("<b>4. Akü (Akümülatör)</b>", self.style_table_cell_bold),
-                Paragraph("Ulaşım taşıtlarının motorunu ilk çalıştıran büyük ve dayanıklı kaynak.", self.style_table_cell),
-                Paragraph("Otomobil, otobüs, kamyon, uçak, helikopter, gemi.", self.style_table_cell),
-                Paragraph("Araç hareket ettikçe kendi kendini şarj eder.", self.style_table_cell),
-            ],
-        ]
+            tablo_verisi = [
+                [
+                    Paragraph("<b>Elektrik Kaynağı</b>", self.style_table_header),
+                    Paragraph("<b>Tanım ve Güç Seviyesi</b>", self.style_table_header),
+                    Paragraph("<b>Örnek Kullanım Alanları</b>", self.style_table_header),
+                    Paragraph("<b>Şarj / Değişim</b>", self.style_table_header),
+                ],
+                [
+                    Paragraph("<b>1. Şehir Elektriği</b>", self.style_table_cell_bold),
+                    Paragraph("Santrallerde (baraj, rüzgâr, termik, güneş) üretilen çok yüksek enerjili elektrik.", self.style_table_cell),
+                    Paragraph("Buzdolabı, çamaşır makinesi, fırın, televizyon, ütü (Sabit büyük ev aletleri).", self.style_table_cell),
+                    Paragraph("Prizden kesintisiz aktarılır.", self.style_table_cell),
+                ],
+                [
+                    Paragraph("<b>2. Pil</b>", self.style_table_cell_bold),
+                    Paragraph("Düşük enerjili, hafif kimyasal enerji deposu. Az enerji harcayan taşınabilir aletler içindir.", self.style_table_cell),
+                    Paragraph("Duvar saati, televizyon kumandası, el feneri, uzaktan kumandalı oyuncak.", self.style_table_cell),
+                    Paragraph("Genellikle tek kullanımlık (primer); şarj edilebilen (sekonder) türleri de vardır. Atık pil kutusuna atılır.", self.style_table_cell),
+                ],
+                [
+                    Paragraph("<b>3. Batarya</b>", self.style_table_cell_bold),
+                    Paragraph("Birden fazla pil hücresinin birleşimiyle oluşan güçlü depolama kaynağı.", self.style_table_cell),
+                    Paragraph("Cep telefonu, tablet, dizüstü bilgisayar, telsiz, ışıldak.", self.style_table_cell),
+                    Paragraph("Şarj aleti ve priz bağlantısıyla defalarca doldurulabilir.", self.style_table_cell),
+                ],
+                [
+                    Paragraph("<b>4. Akü (Akümülatör)</b>", self.style_table_cell_bold),
+                    Paragraph("Motorlu taşıtların ilk marş hareketini başlatan ve elektrik donanımını besleyen büyük kaynak.", self.style_table_cell),
+                    Paragraph("Otomobil, otobüs, kamyon, uçak, helikopter, gemi (İlk marş ve elektrik donanımı).", self.style_table_cell),
+                    Paragraph("Motor çalışırken alternatör (şarj dinamosu) vasıtasıyla sürekli şarj edilir.", self.style_table_cell),
+                ],
+            ]
 
-        kaynak_tablosu = Table(tablo_verisi, colWidths=[90, 145, 185, 91])
-        kaynak_tablosu.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
-            ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#ffffff"), colors.HexColor("#f8fafc")]),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        flowables.append(kaynak_tablosu)
+            kaynak_tablosu = Table(tablo_verisi, colWidths=[90, 145, 185, 91])
+            kaynak_tablosu.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
+                ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#ffffff"), colors.HexColor("#f8fafc")]),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            flowables.append(kaynak_tablosu)
 
         # ===================================================================
         # SAYFA 12 & 13: ÖĞRENCİ ETKİNLİK VE DEĞERLENDİRME FASİKÜLÜ (10 SORU)
