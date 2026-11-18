@@ -20,6 +20,7 @@ Kullanım:
 import sys
 import time
 import argparse
+import hashlib
 from pathlib import Path
 from typing import List, Set, Dict, Any, Tuple
 import pypdf
@@ -36,6 +37,7 @@ from config import CHROMA_DB_DIR, REFERENCE_BOOKS_DIR, OLLAMA_URL, EMBED_MODEL
 from index_core import (
     calculate_file_hash,
     generate_chunk_id,
+    clean_pedagogical_text,
     verify_embedding_dimension,
     detect_page_offset,
     get_book_metadata_and_unit,
@@ -47,8 +49,9 @@ from index_core import (
     PRIMARY_BOOK_MANIFESTS,
 )
 
-# Kesin 768 boyutlu koleksiyon adı
+# Kesin 768 boyutlu koleksiyon adı ve geçerli chunk sürümü
 TARGET_COLLECTION = "eduframe_meb_768"
+CURRENT_VERSION = "v2"
 
 TARGET_BOOKS = [
     "ilkokul_fenbilimleri_3.sinif_1.kitap.pdf",
@@ -110,20 +113,99 @@ def verify_book_chunks_in_db(store: Chroma, expected_ids: Set[str]) -> Tuple[boo
         return False, set(expected_ids)
 
 
-def check_book_legacy_records(store: Chroma, filename: str) -> List[str]:
+def check_book_legacy_records(
+    store: Chroma,
+    filename: str,
+    target_version: str = ""
+) -> List[str]:
     """
-    ChromaDB'de belirtilen kitaba ait eski ID şemalı (:pXXXX: olup :phys_ olmayan) kayıtları listeler.
+    ChromaDB'de belirtilen kitaba ait eski ID şemalı (:pXXXX: olup :phys_ olmayan)
+    veya eski sürüm (target_version belirtilmişse o etiketi içermeyen) kayıtları listeler.
     """
     try:
         col = store._collection
         res = col.get(where={"source": filename}, include=[])
         if not res or not res.get("ids"):
             return []
-        legacy_ids = [cid for cid in res["ids"] if ":p" in cid and ":phys_" not in cid]
+        legacy_ids = [
+            cid for cid in res["ids"]
+            if (":p" in cid and ":phys_" not in cid) or (target_version and f":{target_version}:" not in cid)
+        ]
         return legacy_ids
     except Exception as e:
         print(f"[UYARI] check_book_legacy_records hatası ({filename}): {e}")
         return []
+
+
+def verify_indexed_book_integrity(
+    store: Chroma,
+    filename: str,
+    expected_ids: Set[str],
+    target_version: str = CURRENT_VERSION,
+    batch_size: int = 250
+) -> Tuple[bool, List[str]]:
+    """
+    Belirtilen kitaba ait kayıtların ChromaDB'de eksiksiz, tutarlı metadata ve
+    temizlenmiş pedagojik metin taşıdığını derinlemesine doğrular.
+
+    Kontrol edilen kriterler:
+    1. ID tamlığı: Beklenen tüm ID'ler DB'de mevcut mu?
+    2. Versiyon tutarlılığı: Tüm parçalar metadata'da target_version ("v2") taşıyor mu ve ID'sinde f":{target_version}:" var mı?
+    3. Metadata alanları: source, physical_page, unite, konu, referans, content_hash alanları dolu ve geçerli mi?
+    4. Metin kalitesi: Parçalar pedagojik gürültü (nokta satırı / aşırı nokta kirliliği) barındırıyor mu?
+
+    Returns:
+        (is_valid: bool, issues: List[str])
+    """
+    if not expected_ids:
+        return True, []
+
+    issues: List[str] = []
+    try:
+        col = store._collection
+        exp_list = list(expected_ids)
+
+        found_ids: Set[str] = set()
+        for i in range(0, len(exp_list), batch_size):
+            sub_ids = exp_list[i : i + batch_size]
+            res = col.get(ids=sub_ids, include=["metadatas", "documents"])
+            if not res or not res.get("ids"):
+                continue
+
+            for cid, meta, doc in zip(res["ids"], res["metadatas"], res["documents"]):
+                found_ids.add(cid)
+                # 1. Versiyon kontrolü
+                v_meta = meta.get("version", "") if meta else ""
+                if v_meta != target_version:
+                    issues.append(f"Parça {cid}: Metadata versiyonu '{v_meta}' != '{target_version}'")
+                if target_version and f":{target_version}:" not in cid:
+                    issues.append(f"Parça {cid}: ID içinde ':{target_version}:' etiketi bulunmuyor")
+
+                # 2. Kaynak dosya ve sayfa doğrulaması
+                if not meta or meta.get("source") != filename:
+                    issues.append(f"Parça {cid}: Metadata source '{meta.get('source') if meta else None}' != '{filename}'")
+                if not meta or "physical_page" not in meta or meta["physical_page"] <= 0:
+                    issues.append(f"Parça {cid}: Geçersiz physical_page: {meta.get('physical_page') if meta else None}")
+
+                # 3. Content hash kontrolü
+                c_hash = meta.get("content_hash", "") if meta else ""
+                if not c_hash:
+                    issues.append(f"Parça {cid}: content_hash metadata alanı eksik")
+
+                # 4. Metin kalitesi kontrolü (öğrenci nokta dizileri temizlenmiş olmalı)
+                if doc and "....." in doc:
+                    issues.append(f"Parça {cid}: Temizlenmemiş nokta dizisi (.....) tespit edildi")
+                if not doc or len(doc.strip()) < 15:
+                    issues.append(f"Parça {cid}: Metin çok kısa (<15 karakter)")
+
+        missing_ids = expected_ids - found_ids
+        if missing_ids:
+            issues.append(f"{len(missing_ids)} beklenen chunk ID veritabanında bulunamadı! Örnekler: {list(missing_ids)[:3]}")
+
+        return (len(issues) == 0), issues
+    except Exception as e:
+        issues.append(f"Veritabanı denetim hatası ({filename}): {e}")
+        return False, issues
 
 
 def can_cleanup_stale_chunks(
@@ -132,6 +214,7 @@ def can_cleanup_stale_chunks(
     expected_new_count: int,
     missing_ids: Set[str],
     page_errors: List[Dict[str, Any]],
+    integrity_ok: bool = True,
 ) -> bool:
     """
     Eski sürüm kayıtlarının temizlenmesinin güvenli olup olmadığını belirler.
@@ -140,6 +223,7 @@ def can_cleanup_stale_chunks(
     2. Sunulan yeni parça sayısı ile başarılı eklenen sayı eşit olmalı (book_success == expected_new_count).
     3. Beklenen tüm ID'ler ChromaDB'de doğrulanmış olmalı (len(missing_ids) == 0).
     4. PDF metin çıkarma veya metadata hatası nedeniyle hiçbir sayfa atlanmamış olmalı (len(page_errors) == 0).
+    5. Metin ve metadata bütünlüğü doğrulaması hatasız olmalı (integrity_ok).
     """
     if book_has_failure:
         return False
@@ -148,6 +232,8 @@ def can_cleanup_stale_chunks(
     if missing_ids:
         return False
     if page_errors:
+        return False
+    if not integrity_ok:
         return False
     return True
 
@@ -272,6 +358,9 @@ def main():
                 })
                 continue
 
+            # 1. PEDAGOJİK METİN TEMİZLEME (Öğrenci nokta/çizgi cevap satırlarını filtrele)
+            raw_text = clean_pedagogical_text(raw_text)
+
             if not raw_text or len(raw_text) < 25:
                 continue
 
@@ -301,7 +390,7 @@ def main():
                 if len(c_text.strip()) < 20:
                     continue
 
-                cid = generate_chunk_id(fname, f_hash, phys_page_no, c_idx)
+                cid = generate_chunk_id(fname, f_hash, phys_page_no, c_idx, version=CURRENT_VERSION)
                 all_expected_ids.add(cid)
 
                 # Eğer chunk halihazırda veritabanında varsa ATLA (Tekrar çalıştırma güvenliği)
@@ -310,6 +399,7 @@ def main():
                     continue
 
                 t_count = count_tokens(c_text, gemma_tok)
+                content_hash = hashlib.sha256(c_text.encode("utf-8")).hexdigest()[:12]
                 cm = {
                     "source": fname,
                     "kitap_adi": base_meta["kitap_adi"],
@@ -329,6 +419,8 @@ def main():
                     "file_hash": f_hash[:12],
                     "char_count": len(c_text),
                     "token_count": t_count,
+                    "version": CURRENT_VERSION,
+                    "content_hash": content_hash,
                 }
                 book_docs.append(Document(page_content=c_text, metadata=cm))
                 book_ids.append(cid)
@@ -351,13 +443,25 @@ def main():
                       f"Örnek eksikler: {list(missing_ids)[:3]}")
                 continue
 
-            # Eski şemalı (:pXXXX: olup :phys_ olmayan) kayıtlar var mı kontrol et
-            legacy_ids = check_book_legacy_records(store, fname)
+            # Metin ve metadata bütünlüğü doğrulaması
+            integrity_ok, integrity_issues = verify_indexed_book_integrity(
+                store=store,
+                filename=fname,
+                expected_ids=all_expected_ids,
+                target_version=CURRENT_VERSION
+            )
+            if not integrity_ok:
+                print(f" [KRİTİK HATA] {kitap_adi} veri bütünlüğü doğrulanamadı! "
+                      f"Tespit edilen {len(integrity_issues)} sorun var. Örnek: {integrity_issues[0]}")
+                continue
+
+            # Eski şemalı veya eski sürümlü kayıtlar var mı kontrol et
+            legacy_ids = check_book_legacy_records(store, fname, target_version=CURRENT_VERSION)
             if legacy_ids:
-                print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni parça DB'de mevcut; "
-                      f"ancak {len(legacy_ids)} eski şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
-                cleaned = cleanup_stale_chunks(store, fname, f_hash)
-                print(f" ✓ Eski şemalı {cleaned} parça temizlendi ve kitap güncel duruma getirildi.")
+                print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
+                      f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
+                cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
+                print(f" ✓ Eski sürüm/şemalı {cleaned} parça temizlendi ve kitap güncel duruma getirildi.")
             else:
                 print(f" ✓ {kitap_adi} zaten tamamen güncel ({len(all_expected_ids)} parça DB'de doğrulandı, eski kayıt yok).")
             continue
@@ -394,10 +498,20 @@ def main():
         is_verified, missing_ids = verify_book_chunks_in_db(store, all_expected_ids)
         verified_count = len(all_expected_ids) - len(missing_ids)
 
+        # Metin ve metadata bütünlüğü doğrulaması
+        integrity_ok, integrity_issues = verify_indexed_book_integrity(
+            store=store,
+            filename=fname,
+            expected_ids=all_expected_ids,
+            target_version=CURRENT_VERSION
+        )
+
         book_elapsed = round(time.time() - t_book_start, 1)
         total_newly_indexed += book_success
         print(f"\n ✓ {kitap_adi} ({fname}) işlendi ({book_success} parça sunuldu, "
               f"DB'de doğrulanan beklenen: {verified_count}/{len(all_expected_ids)}, {book_elapsed} sn).")
+        if not integrity_ok:
+            print(f" ⚠️ {kitap_adi} bütünlük denetiminde {len(integrity_issues)} uyarı/hata bulundu!")
 
         # 2 & 3. KURAL: Güvenlik Denetimi — Doğrulama başarısız olursa veya sayfa hatası varsa eski sürümü kesinlikle silme!
         book_has_failure = any(f.get("chunk_id", "").startswith(fname) for f in all_failed_items)
@@ -407,10 +521,11 @@ def main():
             expected_new_count=len(book_docs),
             missing_ids=missing_ids,
             page_errors=page_errors,
+            integrity_ok=integrity_ok,
         )
 
         if safe_to_cleanup:
-            cleaned = cleanup_stale_chunks(store, fname, f_hash)
+            cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
             if cleaned > 0:
                 print(f" -> İndeksleme eksiksiz tamamlandı ve doğrulandı: Eski sürüm/şemaya ait {cleaned} parça temizlendi.")
         else:
@@ -423,6 +538,8 @@ def main():
                 reasons.append(f"{len(missing_ids)} beklenen chunk ID'si DB'de eksik")
             if page_errors:
                 reasons.append(f"{len(page_errors)} sayfada metin çıkarma/metadata hatası")
+            if not integrity_ok:
+                reasons.append(f"metin/metadata bütünlük hatası ({len(integrity_issues)} sorun)")
             print(f" [GÜVENLİK ENGELİ] {kitap_adi} için eski sürüm temizliği ENGELLENDİ! Gerekçeler: {', '.join(reasons)}.")
 
     total_elapsed = round(time.time() - t_start, 1)
