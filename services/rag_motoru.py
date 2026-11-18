@@ -29,12 +29,12 @@ from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 
-# Kalite ve Sıralama Araçlarını İçe Aktar (d6 / quality_utils)
+# Kalite ve Sıralama Araçlarını İçe Aktar (utils.lexical_tools öncelikli)
 try:
-    from quality_utils import rerank_candidates as lexical_rerank, validate_citations, hit_at_k
+    from utils.lexical_tools import rerank_candidates as lexical_rerank, validate_citations, hit_at_k
 except ImportError:
     try:
-        from lexical_similarity_test import rerank_candidates as lexical_rerank
+        from quality_utils import rerank_candidates as lexical_rerank, validate_citations, hit_at_k
     except ImportError:
         lexical_rerank = None
 

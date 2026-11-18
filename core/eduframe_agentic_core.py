@@ -34,12 +34,15 @@ from services.question_generator import QuestionGenerator
 from services.pdf_generator import PDFGenerator
 from config import DEFAULT_SEVIYE
 
-# Kalite ve Doğrulama Araçları (d6_03_validate & quality_utils)
+# Kalite ve Doğrulama Araçları (utils.lexical_tools öncelikli)
 try:
-    from quality_utils import validate_citations, rerank_candidates
+    from utils.lexical_tools import validate_citations, rerank_candidates
 except ImportError:
-    validate_citations = None
-    rerank_candidates = None
+    try:
+        from quality_utils import validate_citations, rerank_candidates
+    except ImportError:
+        validate_citations = None
+        rerank_candidates = None
 
 # Gemma Tokenizer (tokenizer_utils & gemma_tokenizer.json)
 try:
