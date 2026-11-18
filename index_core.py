@@ -349,6 +349,7 @@ def cleanup_stale_chunks(store: Chroma, filename: str, current_hash: str) -> int
         if stale_ids:
             col.delete(ids=stale_ids)
             return len(stale_ids)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[UYARI] cleanup_stale_chunks sırasında veritabanı hatası ({filename}): {e}")
+        raise RuntimeError(f"ChromaDB eski sürüm temizliği ({filename}) başarısız oldu: {e}") from e
     return 0

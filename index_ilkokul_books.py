@@ -75,8 +75,9 @@ def get_existing_chunk_ids(store: Chroma) -> Set[str]:
             existing_ids.update(res["ids"])
             offset += len(res["ids"])
         return existing_ids
-    except Exception:
-        return set()
+    except Exception as e:
+        print(f"[HATA] get_existing_chunk_ids sırasında veritabanı hatası: {e}")
+        raise RuntimeError(f"ChromaDB mevcut kayıtları taranırken veritabanı hatası: {e}") from e
 
 
 def main():
@@ -179,11 +180,6 @@ def main():
             print(f" [HATA] PDF okunamadı: {e}")
             continue
 
-        # Eski sürüm kayıtlarını temizle (varsa)
-        cleaned = cleanup_stale_chunks(store, fname, f_hash)
-        if cleaned > 0:
-            print(f" -> Eski sürümden kalan {cleaned} parça temizlendi.")
-
         book_docs: List[Document] = []
         book_ids: List[str] = []
         book_skipped = 0
@@ -274,6 +270,15 @@ def main():
         book_elapsed = round(time.time() - t_book_start, 1)
         total_newly_indexed += book_success
         print(f"\n ✓ {kitap_adi} tamamlandı ({book_success} yeni parça eklendi, {book_elapsed} sn).")
+
+        # Güvenlik Kuralı: Eski sürüm kayıtlarını YALNIZCA yeni indeksleme eksiksiz tamamlandıysa temizle!
+        book_has_failure = any(f.get("chunk_id", "").startswith(fname) for f in all_failed_items)
+        if not book_has_failure and (book_success == len(book_docs)):
+            cleaned = cleanup_stale_chunks(store, fname, f_hash)
+            if cleaned > 0:
+                print(f" -> İndeksleme eksiksiz tamamlandı: Eski hash'e ait {cleaned} parça temizlendi.")
+        elif book_has_failure:
+            print(f" [UYARI] Kitapta başarısız parçalar olduğu için eski sürüm silinmedi (veri kaybı engellendi).")
 
     total_elapsed = round(time.time() - t_start, 1)
     print("\n" + "=" * 75)

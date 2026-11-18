@@ -81,11 +81,13 @@ class GuvenliEmbeddingMotoru(Embeddings):
         self,
         model_adi: str = EMBED_MODEL,
         base_url: str = OLLAMA_URL,
-        koleksiyon_adi: Optional[str] = None
+        koleksiyon_adi: Optional[str] = None,
+        allow_fallback: bool = False,
     ):
         self.model_adi = model_adi
         self.base_url = base_url
         self.koleksiyon_adi = koleksiyon_adi or COLLECTION
+        self.allow_fallback = allow_fallback
         self._ollama_client = None
         self._ollama_kullanilabilir = None
         self._hedef_boyut = self._koleksiyon_boyutu_al()
@@ -153,8 +155,14 @@ class GuvenliEmbeddingMotoru(Embeddings):
         if ollama:
             try:
                 return ollama.embed_documents(texts)
-            except Exception:
-                pass
+            except Exception as e:
+                if not self.allow_fallback:
+                    raise RuntimeError(f"[KRİTİK HATA] Ollama embedding işlemi başarısız oldu: {e}") from e
+        if not self.allow_fallback:
+            raise RuntimeError(
+                f"[KRİTİK HATA] Üretim modunda Ollama ({self.model_adi}) servisine ulaşılamadı. "
+                f"Vektör bütünlüğünü korumak için hash fallback kapalıdır. Lütfen Ollama servisini başlatın."
+            )
         return [self._fallback_embed(t) for t in texts]
 
     def embed_query(self, text: str) -> List[float]:
@@ -162,8 +170,15 @@ class GuvenliEmbeddingMotoru(Embeddings):
         if ollama:
             try:
                 return ollama.embed_query(text)
-            except Exception:
-                pass
+            except Exception as e:
+                if not self.allow_fallback:
+                    raise RuntimeError(f"[KRİTİK HATA] Ollama sorgu embedding işlemi başarısız oldu: {e}") from e
+        if not self.allow_fallback:
+            raise RuntimeError(
+                f"[KRİTİK HATA] Üretim modunda Ollama ({self.model_adi}) servisine ulaşılamadı. "
+                f"Semantik arama kalitesini ve veri bütünlüğünü korumak için hash fallback kapalıdır. "
+                f"Lütfen Ollama servisini başlatın."
+            )
         return self._fallback_embed(text)
 
 
@@ -180,11 +195,15 @@ class RAGMotoru:
         db_dizini: Optional[Path] = None,
         koleksiyon_adi: str = COLLECTION,
         embedding_motoru: Optional[Embeddings] = None,
+        allow_fallback: bool = False,
     ):
         self.db_dizini = Path(db_dizini) if db_dizini else CHROMA_DB_DIR
         self.db_dizini.mkdir(parents=True, exist_ok=True)
         self.koleksiyon_adi = koleksiyon_adi
-        self.embedding = embedding_motoru or GuvenliEmbeddingMotoru(koleksiyon_adi=self.koleksiyon_adi)
+        self.allow_fallback = allow_fallback
+        self.embedding = embedding_motoru or GuvenliEmbeddingMotoru(
+            koleksiyon_adi=self.koleksiyon_adi, allow_fallback=allow_fallback
+        )
         self._vector_store: Optional[Chroma] = None
 
     def get_vector_store(self) -> Chroma:
