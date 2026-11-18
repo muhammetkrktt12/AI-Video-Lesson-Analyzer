@@ -210,15 +210,39 @@ class TestIndexingSafety(unittest.TestCase):
         self.assertNotIn("kitap.pdf:421c:phys_0001:c000", legacy_ids)
 
     def test_12_can_cleanup_stale_chunks_allows_only_when_all_conditions_satisfied(self):
-        """Tüm koşullar (sıfır hata, tam batch, tam ID kümesi, sıfır sayfa hatası) eksiksiz sağlandığında temizliğe izin verir."""
+        """Tüm koşullar (sıfır hata, tam batch, tam ID kümesi, sıfır sayfa hatası, migrasyon izni) eksiksiz sağlandığında temizliğe izin verir."""
         can_clean = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=193,
+            expected_new_count=193,
+            missing_ids=set(),
+            page_errors=[],
+            migration_allowed=True,
+        )
+        self.assertTrue(can_clean, "Tüm koşullar sağlandığında temizliğe izin verilmelidir.")
+
+    def test_13_can_cleanup_stale_chunks_blocks_when_migration_not_allowed(self):
+        """Açık migrasyon onayı (migration_allowed=True) verilmediğinde tüm diğer koşullar sağlansa dahi temizlik engellenir."""
+        # 1. migration_allowed varsayılan olarak False olmalı ve engellemeli
+        can_clean_default = can_cleanup_stale_chunks(
             book_has_failure=False,
             book_success=193,
             expected_new_count=193,
             missing_ids=set(),
             page_errors=[]
         )
-        self.assertTrue(can_clean, "Tüm koşullar sağlandığında temizliğe izin verilmelidir.")
+        self.assertFalse(can_clean_default, "migration_allowed belirtilmediğinde varsayılan olarak temizlik engellenmelidir.")
+
+        # 2. migration_allowed=False açıkça verildiğinde engellemeli
+        can_clean_explicit = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=193,
+            expected_new_count=193,
+            missing_ids=set(),
+            page_errors=[],
+            migration_allowed=False
+        )
+        self.assertFalse(can_clean_explicit, "migration_allowed=False olduğunda temizlik engellenmelidir.")
 
 
 if __name__ == "__main__":

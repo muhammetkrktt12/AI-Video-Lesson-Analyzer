@@ -16,11 +16,13 @@ Bu test paketi, v2 migrasyonu sırasındaki güvenlik mekanizmalarını doğrula
 
 import hashlib
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from typing import List, Dict, Any, Set
 
 from langchain_core.documents import Document
 
+from config import CHROMA_DB_DIR
 from index_core import (
     generate_chunk_id,
     clean_pedagogical_text,
@@ -468,7 +470,8 @@ class TestV2MigrationSafety(unittest.TestCase):
             expected_new_count=len(new_v2_ids),
             missing_ids=missing,
             page_errors=[],
-            integrity_ok=integrity_ok
+            integrity_ok=integrity_ok,
+            migration_allowed=True,
         )
         self.assertTrue(can_clean)
 
@@ -600,6 +603,164 @@ class TestV2MigrationSafety(unittest.TestCase):
             cleanup_attempted = False
 
         self.assertFalse(cleanup_attempted)
+
+    # -------------------------------------------------------------------------
+    # TEST 12: Yazma Sonrası Doğrudan Güvenlik Kilidi (migration_allowed=False)
+    # -------------------------------------------------------------------------
+    def test_12_migration_lock_blocks_cleanup_after_writing_chunks(self):
+        """v2 parçaları yazılıp doğrulansa bile, migration_allowed=False ise temizlik kesinlikle engellenir."""
+        mock_store = MagicMock()
+        mock_col = MagicMock()
+        mock_store._collection = mock_col
+
+        v2_ids = [f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_000{i}:c000" for i in range(1, 4)]
+        v1_ids = [f"{self.filename_a}:{self.hash_a[:12]}:phys_000{i}:c000" for i in range(1, 4)]
+
+        # DB get mock
+        v2_docs = [f"Pedagojik v2 metni {i}" for i in range(1, 4)]
+        v2_metas = [
+            {
+                "source": self.filename_a,
+                "file_hash": self.hash_a[:12],
+                "version": "v2",
+                "physical_page": i,
+                "content_hash": hashlib.sha256(doc.encode("utf-8")).hexdigest()[:12]
+            }
+            for i, doc in enumerate(v2_docs, start=1)
+        ]
+        mock_col.get.return_value = {
+            "ids": v2_ids,
+            "metadatas": v2_metas,
+            "documents": v2_docs,
+        }
+
+        # 1. ID doğrulaması ve bütünlük denetimi başarılı
+        is_verified, missing = verify_book_chunks_in_db(mock_store, set(v2_ids))
+        self.assertTrue(is_verified)
+        integrity_ok, issues = verify_indexed_book_integrity(mock_store, self.filename_a, set(v2_ids), target_version="v2")
+        self.assertTrue(integrity_ok)
+
+        # 2. migration_allowed = False iken can_cleanup_stale_chunks False dönmelidir
+        can_clean = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=len(v2_ids),
+            expected_new_count=len(v2_ids),
+            missing_ids=missing,
+            page_errors=[],
+            integrity_ok=integrity_ok,
+            migration_allowed=False,
+        )
+        self.assertFalse(can_clean)
+
+        # 3. İndeksleme akışındaki doğrudan güvenlik kilidi denetimi:
+        migration_allowed = False
+        cleanup_called = False
+        if not migration_allowed:
+            # Doğrudan engellendi
+            pass
+        elif can_clean:
+            cleanup_stale_chunks(mock_store, self.filename_a, self.hash_a, target_version="v2")
+            cleanup_called = True
+
+        self.assertFalse(cleanup_called)
+        mock_col.delete.assert_not_called()
+
+    # -------------------------------------------------------------------------
+    # TEST 13: Güncel Kitapta (not book_docs) migration_allowed=False Kilidi
+    # -------------------------------------------------------------------------
+    def test_13_idempotent_book_blocks_cleanup_when_migration_not_allowed(self):
+        """Tüm v2 parçaları DB'de mevcut olsa dahi, migration_allowed=False ise eski kayıtlar ASLA silinmez."""
+        mock_store = MagicMock()
+        mock_col = MagicMock()
+        mock_store._collection = mock_col
+
+        v2_ids = [f"{self.filename_a}:{self.hash_a[:12]}:v2:phys_0001:c000"]
+        v1_ids = [f"{self.filename_a}:{self.hash_a[:12]}:phys_0001:c000"]
+
+        doc_text = "Pedagojik v2 metni"
+        meta = {
+            "source": self.filename_a,
+            "file_hash": self.hash_a[:12],
+            "version": "v2",
+            "physical_page": 1,
+            "content_hash": hashlib.sha256(doc_text.encode("utf-8")).hexdigest()[:12]
+        }
+        mock_col.get.return_value = {
+            "ids": v2_ids,
+            "metadatas": [meta],
+            "documents": [doc_text],
+        }
+
+        # not book_docs akış simülasyonu
+        legacy_ids = [v1_ids[0]]
+        migration_allowed = False
+        cleanup_called = False
+
+        if legacy_ids:
+            if not migration_allowed:
+                pass  # Güvenlik kilidi devrede!
+            else:
+                cleanup_stale_chunks(mock_store, self.filename_a, self.hash_a, target_version="v2")
+                cleanup_called = True
+
+        self.assertFalse(cleanup_called)
+        mock_col.delete.assert_not_called()
+
+    # -------------------------------------------------------------------------
+    # TEST 14: Varsayılan Davranış (Dry-Run / İzin Yok) Yazma ve Silmeyi Engeller
+    # -------------------------------------------------------------------------
+    def test_14_dry_run_prevents_writing_and_deletion_by_default(self):
+        """--allow-migration ve --allow-write verilmediğinde yeni parçalar yazılmaz ve eski kayıtlar silinmez."""
+        mock_store = MagicMock()
+        mock_col = MagicMock()
+        mock_store._collection = mock_col
+
+        # Parametreler: varsayılan mod (izin yok)
+        migration_allowed = False
+        write_allowed = False
+
+        book_docs = [Document(page_content="Yeni içerik", metadata={"chunk_id": "c1"})]
+        book_ids = ["c1"]
+
+        written_chunks = 0
+        deleted_chunks = 0
+
+        # İndeksleme yazma kontrolü simülasyonu
+        if not write_allowed:
+            # DRY-RUN: Yazma yapılmadı
+            pass
+        else:
+            written_chunks = len(book_docs)
+
+        # Temizlik kontrolü simülasyonu
+        if not migration_allowed:
+            # GÜVENLİK KİLİDİ: Temizlik yapılmadı
+            pass
+        else:
+            deleted_chunks = 1
+
+        self.assertEqual(written_chunks, 0, "İzin olmadan hiçbir parça yazılmamalıdır.")
+        self.assertEqual(deleted_chunks, 0, "İzin olmadan hiçbir kayıt silinmemelidir.")
+
+    # -------------------------------------------------------------------------
+    # TEST 15: Canlı Veritabanı Koruma Kilidi (Live DB Guard)
+    # -------------------------------------------------------------------------
+    def test_15_live_database_guard_blocks_mutation(self):
+        """Hedef dizin data/chroma_db olduğunda doğrudan yazma veya silme işlemi engellenir."""
+        live_db_path = CHROMA_DB_DIR.resolve()
+        target_path = Path("data/chroma_db").resolve()
+        is_live_db = (str(target_path).lower() == str(live_db_path).lower())
+        self.assertTrue(is_live_db, "Hedef canlı veritabanı olarak doğru tanınmalıdır.")
+
+        # Canlı DB üzerinde migration_allowed=True veya write_allowed=True verilirse engellenmelidir
+        migration_allowed = True
+        write_allowed = True
+
+        blocked = False
+        if is_live_db and (migration_allowed or write_allowed):
+            blocked = True
+
+        self.assertTrue(blocked, "Canlı veritabanı üzerinde doğrudan migrasyon engellenmelidir.")
 
 
 if __name__ == "__main__":

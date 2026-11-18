@@ -237,7 +237,7 @@ def can_cleanup_stale_chunks(
     missing_ids: Set[str],
     page_errors: List[Dict[str, Any]],
     integrity_ok: bool = True,
-    migration_allowed: bool = True,
+    migration_allowed: bool = False,
 ) -> bool:
     """
     Eski sürüm kayıtlarının temizlenmesinin güvenli olup olmadığını belirler.
@@ -284,15 +284,23 @@ def main():
         default=False,
         help="v2 migrasyonuna ve eski kayıt temizliğine açık onay verir (güvenlik kilidi)"
     )
+    parser.add_argument(
+        "--allow-write",
+        action="store_true",
+        default=False,
+        help="Yeni parçaların veritabanına yazılmasına izin verir (eski kayıtları silmez, aşamalı geçiş sağlar)"
+    )
     args = parser.parse_args()
 
     selected_books = [args.kitap] if args.kitap else TARGET_BOOKS
     target_db_dir = Path(args.db_path).resolve() if args.db_path else CHROMA_DB_DIR.resolve()
-    is_live_db = (target_db_dir == CHROMA_DB_DIR.resolve())
+    is_live_db = (str(target_db_dir).lower() == str(CHROMA_DB_DIR.resolve()).lower())
     migration_allowed = bool(args.allow_migration)
+    write_allowed = migration_allowed or bool(args.allow_write)
 
-    if is_live_db and migration_allowed:
-        print("\n[GÜVENLİK ENGELİ] Canlı veritabanı (data/chroma_db) üzerinde migrasyon provası çalıştırılamaz!")
+    if is_live_db and (migration_allowed or write_allowed):
+        print("\n[GÜVENLİK ENGELİ] Canlı veritabanı (data/chroma_db, 903 kayıt) doğrudan değiştirilemez!")
+        print("                 Canlı veritabanı üzerinde doğrudan yazma veya silme işlemi yapılamaz.")
         print("                 Lütfen test veritabanı yolunu açıkça belirtin: --db-path data/chroma_db_v2_dryrun")
         sys.exit(1)
 
@@ -305,7 +313,10 @@ def main():
     print(f" -> Parçalama Yapısı        : 1000 karakter / 150 örtüşme (overlap)")
     if args.kitap:
         print(f" -> Filtrelenen Tekil Kitap : {args.kitap}")
-    print(f" -> Migrasyon Temizlik İzni : {'AÇIK (--allow-migration)' if migration_allowed else 'KAPALI (Salt İndeksleme)'}")
+    print(f" -> Yazma İzni              : {'AÇIK' if write_allowed else 'KAPALI (Salt Önizleme / Dry-Run)'}")
+    print(f" -> Migrasyon Temizlik İzni : {'AÇIK (--allow-migration)' if migration_allowed else 'KAPALI (Eski Kayıt Silme Engelli)'}")
+    if is_live_db:
+        print(" -> Canlı DB Güvenlik Modu : AKTİF (data/chroma_db salt-okunur modda korunuyor)")
     print("=" * 75)
 
     # 1. EMBEDDING BOYUTU DOĞRULAMA (768-D KONTROLÜ)
@@ -511,9 +522,10 @@ def main():
                 continue
             if legacy_ids:
                 if not migration_allowed:
-                    print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
-                          f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt var. "
-                          f"--allow-migration bayrağı verilmediği için temizlik ENGELLENDİ.")
+                    print(f" [GÜVENLİK KİLİDİ] {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
+                          f"ancak --allow-migration bayrağı verilmediği için {len(legacy_ids)} eski sürüm/şemalı kayıt SİLİNMEDİ.")
+                elif is_live_db:
+                    print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Canlı veritabanı (data/chroma_db) üzerinde eski kayıt temizliği ENGELLENDİ.")
                 else:
                     print(f" -> {kitap_adi}: Tüm {len(all_expected_ids)} yeni ({CURRENT_VERSION}) parça DB'de mevcut; "
                           f"ancak {len(legacy_ids)} eski sürüm/şemalı kayıt tespit edildi. Temizlik başlatılıyor...")
@@ -533,7 +545,16 @@ def main():
                 f"Çakışan ilk ID'ler: {duplicates[:5]}"
             )
 
-        print(f" -> Eklenecek {len(book_docs)} yeni parça tespit edildi. 768-D Vektörleştirme başlıyor...")
+        print(f" -> Eklenecek {len(book_docs)} yeni parça tespit edildi.")
+
+        # DRY-RUN / YAZMA İZNİ KONTROLÜ
+        if not write_allowed:
+            print(f" [DRY-RUN / ÖNİZLEME] --allow-migration veya --allow-write verilmediği için "
+                  f"{len(book_docs)} yeni parça veritabanına YAZILMADI.")
+            print(f" [GÜVENLİK KİLİDİ] {kitap_adi}: --allow-migration onayı verilmediği için eski kayıt silme ENGELLENDİ.")
+            continue
+
+        print(" -> 768-D Vektörleştirme ve veritabanına yazım başlıyor...")
 
         # Batch ekleme ve Hata Yönetimi
         batch_size = 45
@@ -582,7 +603,13 @@ def main():
             migration_allowed=migration_allowed,
         )
 
-        if safe_to_cleanup:
+        # DOĞRUDAN MİGRASYON İZNİ VE GÜVENLİK KİLİDİ:
+        # cleanup_stale_chunks() çağrısı doğrudan migration_allowed kontrolüne bağlıdır!
+        if not migration_allowed:
+            print(f" [GÜVENLİK KİLİDİ] {kitap_adi}: --allow-migration onayı verilmediği için eski kayıt silme ENGELLENDİ.")
+        elif is_live_db:
+            print(f" [GÜVENLİK ENGELİ] {kitap_adi}: Canlı veritabanı (data/chroma_db) üzerinde eski kayıt silme ENGELLENDİ.")
+        elif safe_to_cleanup:
             cleaned = cleanup_stale_chunks(store, fname, f_hash, target_version=CURRENT_VERSION)
             if cleaned > 0:
                 print(f" -> İndeksleme eksiksiz tamamlandı ve doğrulandı: Eski sürüm/şemaya ait {cleaned} parça temizlendi.")
@@ -598,8 +625,6 @@ def main():
                 reasons.append(f"{len(page_errors)} sayfada metin çıkarma/metadata hatası")
             if not integrity_ok:
                 reasons.append(f"metin/metadata bütünlük hatası ({len(integrity_issues)} sorun)")
-            if not migration_allowed:
-                reasons.append("--allow-migration onayı verilmedi")
             print(f" [GÜVENLİK ENGELİ] {kitap_adi} için eski sürüm temizliği ENGELLENDİ! Gerekçeler: {', '.join(reasons)}.")
 
     total_elapsed = round(time.time() - t_start, 1)

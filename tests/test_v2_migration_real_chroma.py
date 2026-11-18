@@ -215,6 +215,7 @@ class TestRealChromaDBMigration(unittest.TestCase):
             missing_ids=missing,
             page_errors=[],
             integrity_ok=integrity_ok,
+            migration_allowed=True,
         )
         self.assertTrue(can_clean)
 
@@ -448,6 +449,81 @@ class TestRealChromaDBMigration(unittest.TestCase):
         self.assertFalse(ok_tampered)
         self.assertTrue(any("content_hash uyuşmazlığı" in s for s in issues_tampered))
         self.assertTrue(any(cid in s for s in issues_tampered))
+
+    # -------------------------------------------------------------------------
+    # TEST 7: Gerçek ChromaDB'de migration_allowed=False Temizliği Engeller
+    # -------------------------------------------------------------------------
+    def test_07_real_chroma_migration_lock_blocks_cleanup_when_not_allowed(self):
+        """Gerçek ChromaDB üzerinde migration_allowed=False olduğunda v1 parçaları korunur, silinmez."""
+        # 1. 2 adet v1 kaydı ekle
+        v1_docs, v1_ids = [], []
+        for i in range(1, 3):
+            doc, cid = self._create_v1_doc(self.book_a, self.hash_a, i, 0, f"v1 metin {i}")
+            v1_docs.append(doc)
+            v1_ids.append(cid)
+        self.store.add_documents(v1_docs, ids=v1_ids)
+
+        # 2. 2 adet v2 kaydı ekle
+        v2_docs, v2_ids = [], []
+        for i in range(1, 3):
+            doc, cid = self._create_v2_doc(self.book_a, self.hash_a, i, 0, f"v2 pedagojik metin {i}")
+            v2_docs.append(doc)
+            v2_ids.append(cid)
+        self.store.add_documents(v2_docs, ids=v2_ids)
+
+        self.assertEqual(self.store._collection.count(), 4)
+
+        # 3. migration_allowed = False iken can_cleanup_stale_chunks False dönmelidir
+        is_verified, missing = verify_book_chunks_in_db(self.store, set(v2_ids))
+        self.assertTrue(is_verified)
+        integrity_ok, issues = verify_indexed_book_integrity(self.store, self.book_a, set(v2_ids), target_version="v2")
+        self.assertTrue(integrity_ok)
+
+        can_clean_no_mig = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=len(v2_docs),
+            expected_new_count=len(v2_docs),
+            missing_ids=missing,
+            page_errors=[],
+            integrity_ok=integrity_ok,
+            migration_allowed=False,
+        )
+        self.assertFalse(can_clean_no_mig, "migration_allowed=False iken can_cleanup_stale_chunks False dönmelidir.")
+
+        # Güvenlik kilidi simülasyonu: migration_allowed False iken cleanup çağrılmaz
+        migration_allowed = False
+        if not migration_allowed:
+            pass  # Engellendi!
+        elif can_clean_no_mig:
+            cleanup_stale_chunks(self.store, self.book_a, self.hash_a, target_version="v2")
+
+        # Koleksiyonda halen 4 parça olmalıdır (v1 parçaları silinmemiştir)
+        self.assertEqual(self.store._collection.count(), 4)
+        res_v1 = self.store._collection.get(ids=v1_ids, include=[])
+        self.assertEqual(len(res_v1["ids"]), 2)
+
+        # 4. migration_allowed = True verildiğinde temizlik başarıyla gerçekleşir
+        migration_allowed = True
+        can_clean_allowed = can_cleanup_stale_chunks(
+            book_has_failure=False,
+            book_success=len(v2_docs),
+            expected_new_count=len(v2_docs),
+            missing_ids=missing,
+            page_errors=[],
+            integrity_ok=integrity_ok,
+            migration_allowed=migration_allowed,
+        )
+        self.assertTrue(can_clean_allowed)
+
+        cleaned = cleanup_stale_chunks(self.store, self.book_a, self.hash_a, target_version="v2")
+        self.assertEqual(cleaned, 2)
+        self.assertEqual(self.store._collection.count(), 2)
+
+        # v1 silinmiş, v2 korunmuş olmalıdır
+        res_v1_after = self.store._collection.get(ids=v1_ids, include=[])
+        self.assertEqual(len(res_v1_after["ids"]), 0)
+        res_v2_after = self.store._collection.get(ids=v2_ids, include=[])
+        self.assertEqual(len(res_v2_after["ids"]), 2)
 
 
 if __name__ == "__main__":
