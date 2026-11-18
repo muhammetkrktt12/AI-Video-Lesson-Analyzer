@@ -393,6 +393,83 @@ class RAGMotoru:
 
         return adaylar[:k]
 
+    def chunk_alaka_puanla(
+        self,
+        doc: Document,
+        temel_konu: str = "",
+        alt_kavramlar: Optional[List[str]] = None,
+        gorsel_unsurlar: Optional[List[str]] = None,
+        transkript: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Getirilen bir ders kitabı parçasının (chunk), sahnenin temel konusu, görsel unsurları
+        ve alt kavramları ile anlamsal ilgisini değerlendirir.
+        Alakasız veya konu dışı parçaları eler (örn: Pil/oyuncak araba konusundayken baraj/santral chunk'ı).
+        """
+        c_text = (doc.page_content or "").lower()
+        meta = doc.metadata or {}
+        konu_meta = f"{meta.get('unite', '')} {meta.get('konu', '')} {meta.get('alt_konu', '')}".lower()
+        full_doc = f"{c_text} {konu_meta}"
+
+        temel = (temel_konu or "").lower()
+        kavramlar = [k.lower() for k in (alt_kavramlar or [])]
+        tr_snippet = (transkript or "")[:300].lower()
+
+        puan = 0.0
+        pozitif_nedenler = []
+        negatif_nedenler = []
+
+        # 1. Konu ve Alt Kavram Eşleşmesi
+        for k in kavramlar:
+            if k in full_doc:
+                puan += 2.0
+                pozitif_nedenler.append(f"Kavram: '{k}'")
+
+        if "pil" in temel or any("pil" in k for k in kavramlar) or "oyuncak" in tr_snippet:
+            pil_terimleri = ["pil", "fener", "oyuncak", "kumanda", "küçük araç", "taşınabilir", "batarya", "atık pil"]
+            if "duvar saati" in full_doc or "kol saati" in full_doc or "çalar saat" in full_doc or ("saat" in full_doc and "saat yön" not in full_doc and "saatte" not in full_doc and "saatler" not in full_doc):
+                pil_terimleri.append("saat")
+            eslesen_pil = [t for t in pil_terimleri if t in full_doc]
+            if "saat" in eslesen_pil and not any(w in full_doc for w in ["pil", "elektrik", "batarya", "enerji", "cihaz"]):
+                eslesen_pil.remove("saat")
+            if eslesen_pil:
+                puan += 2.0 * len(eslesen_pil)
+                pozitif_nedenler.append(f"Pil/cihaz terimleri: {', '.join(eslesen_pil[:3])}")
+
+            santral_terimleri = ["baraj", "hidroelektrik", "termik santral", "yüksek gerilim", "şebeke teli"]
+            eslesen_santral = [s for s in santral_terimleri if s in full_doc]
+            if eslesen_santral and not ("pil" in c_text or "el feneri" in c_text):
+                puan -= 5.0
+                negatif_nedenler.append(f"Konu dışı santral/baraj içeriği: {', '.join(eslesen_santral[:3])}")
+        elif "şehir elektriği" in temel or "santral" in temel:
+            if any(t in full_doc for t in ["santral", "şehir elektriği", "baraj", "priz", "fırın", "çamaşır makinesi"]):
+                puan += 3.0
+                pozitif_nedenler.append("Şehir elektriği / santral içeriği")
+        elif "akü" in temel or "taşıt" in temel or "otomobil" in tr_snippet:
+            if any(t in full_doc for t in ["akü", "otomobil", "motor", "taşıt", "araç"]):
+                puan += 3.0
+                pozitif_nedenler.append("Akü ve motorlu taşıt içeriği")
+        elif "batarya" in temel or "şarj" in temel or "telefon" in tr_snippet:
+            if any(t in full_doc for t in ["batarya", "şarj", "telefon", "bilgisayar", "tablet"]):
+                puan += 3.0
+                pozitif_nedenler.append("Batarya ve şarj edilebilir cihaz içeriği")
+
+        if any(w in full_doc for w in ["elektrik", "enerji", "araç", "gereç"]):
+            puan += 1.0
+
+        gecerli = puan >= 1.5
+        gerekce = (
+            f"Kabul edildi: {'; '.join(pozitif_nedenler)}"
+            if gecerli
+            else (f"Elendi: {'; '.join(negatif_nedenler) if negatif_nedenler else 'Yetersiz konu alaka puanı'}")
+        )
+
+        return {
+            "gecerli": gecerli,
+            "puan": round(puan, 2),
+            "gerekce": gerekce
+        }
+
     def bolum_bazli_cok_yonlu_arama(
         self,
         bolum_basligi: str,
@@ -400,28 +477,99 @@ class RAGMotoru:
         egitim_seviyesi: str,
         sinif: str = "3. Sınıf",
         ders_adi: str = "Fen Bilimleri",
-        k: int = 2
+        k: int = 2,
+        gorsel_unsurlar: Optional[List[str]] = None,
+        gorsel_aciklamasi: str = "",
+        temel_konu: str = "",
+        alt_kavramlar: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        KULLANICI TAVSİYESİYLE GELİŞTİRİLEN 3 BOYUTLU RAG MİMARİSİ:
-        Her görsel eğitim materyali bölümü için 3 amaca yönelik hedeflenmiş sorgu çalıştırır:
+        KULLANICI TAVSİYESİYLE GELİŞTİRİLEN 3 BOYUTLU VE ÇOK YÖNLÜ RAG MİMARİSİ:
+        Yalnızca transkriptten değil; başlık, temel konu, görsel unsurlar, sahne açıklaması
+        ve alt kavramları birleştirerek hedeflenmiş 3 boyutlu sorgular çalıştırır:
         1. Bilgi Sorgusu: Tanımlar, kavramlar ve resmi konu açıklamaları.
-        2. Pedagojik Sorgu: Sınıf seviyesine uygun anlatım dili, somut örnekler ve kazanımlar.
+        2. Pedagojik Sorgu: Sınıf seviyesine uygun anlatım dili, somut görsel unsurlar ve kazanımlar.
         3. Ölçme-Değerlendirme Sorgusu: İlgili ünitedeki soru tipleri ve etkinlik örnekleri.
 
-        Her parça için kaynak ve sayfa izlenebilirliği ([B1], [P1], [O1] ve sayfa no) sağlar.
+        Getirilen her parçayı chunk_alaka_puanla ile konu uygunluk denetiminden geçirir;
+        alakasız parçaları eler ve sadece doğrulanmış destekleyen parçaları senteze ve kaynakçaya iletir.
         """
-        # 1. Bilgi Sorgusu (Başlık ve transkriptteki anahtar terimlerle zenginleştirilmiş)
-        bilgi_sorgusu = f"{sinif} {ders_adi}. {bolum_basligi}. {transkript[:250]}"
-        bilgi_docs = self.seviye_filtreli_arama(sorgu=bilgi_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        konu_odak = temel_konu or bolum_basligi
+        kavramlar_str = ", ".join(alt_kavramlar) if alt_kavramlar else ""
+        unsurlar_str = ", ".join(gorsel_unsurlar[:3]) if gorsel_unsurlar else ""
 
-        # 2. Pedagojik Sorgu
-        pedagoji_sorgusu = f"{sinif} {ders_adi}. Konu: {bolum_basligi}. {sinif} düzeyinde somut örnekler ve pedagojik anlatım."
-        pedagoji_docs = self.seviye_filtreli_arama(sorgu=pedagoji_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        # 1. Bilgi Sorgusu (Konu, alt kavramlar ve transkript terimleri)
+        bilgi_sorgusu = f"{sinif} {ders_adi}. Konu: {konu_odak}."
+        if kavramlar_str:
+            bilgi_sorgusu += f" Kavramlar: {kavramlar_str}."
+        bilgi_sorgusu += f" {transkript[:200]}"
+        raw_bilgi_docs = self.seviye_filtreli_arama(sorgu=bilgi_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+
+        # 2. Pedagojik Sorgu (Görsel unsurlar ve pedagojik kazanımlar)
+        pedagoji_sorgusu = f"{sinif} {ders_adi}. Konu: {konu_odak}."
+        if unsurlar_str:
+            pedagoji_sorgusu += f" Görsel unsurlar: {unsurlar_str}."
+        pedagoji_sorgusu += f" {sinif} düzeyinde somut örnekler ve pedagojik anlatım."
+        raw_pedagoji_docs = self.seviye_filtreli_arama(sorgu=pedagoji_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
 
         # 3. Ölçme-Değerlendirme Sorgusu
-        olcme_sorgusu = f"{sinif} {ders_adi}. Konu: {bolum_basligi}. Soru, alıştırma ve etkinlik örnekleri."
-        olcme_docs = self.seviye_filtreli_arama(sorgu=olcme_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        olcme_sorgusu = f"{sinif} {ders_adi}. Konu: {konu_odak}. Soru, alıştırma ve etkinlik örnekleri."
+        raw_olcme_docs = self.seviye_filtreli_arama(sorgu=olcme_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+
+        rag_sorgulari = [bilgi_sorgusu, pedagoji_sorgusu, olcme_sorgusu]
+
+        # 4. Aday Parçaları Uygunluk ve Alaka Puanlamasından Geçir
+        tum_adaylar = raw_bilgi_docs + raw_pedagoji_docs + raw_olcme_docs
+        destekleyen_chunklar = []
+        elenen_chunklar = []
+        islenmis_ids = set()
+
+        for d in tum_adaylar:
+            c_id = d.metadata.get("chunk_id") or f"{d.metadata.get('source')}_{d.metadata.get('page')}_{hashlib.md5(d.page_content.encode('utf-8')).hexdigest()[:8]}"
+            if c_id in islenmis_ids:
+                continue
+            islenmis_ids.add(c_id)
+
+            puan_sonucu = self.chunk_alaka_puanla(
+                doc=d,
+                temel_konu=konu_odak,
+                alt_kavramlar=alt_kavramlar,
+                gorsel_unsurlar=gorsel_unsurlar,
+                transkript=transkript,
+            )
+
+            chunk_ozet = {
+                "chunk_id": c_id,
+                "kaynak": d.metadata.get("source"),
+                "sayfa": d.metadata.get("page"),
+                "physical_page": d.metadata.get("physical_page") if d.metadata.get("physical_page") is not None else d.metadata.get("page"),
+                "printed_page": d.metadata.get("printed_page") if d.metadata.get("has_printed_page") else None,
+                "unite": d.metadata.get("unite", ""),
+                "konu": d.metadata.get("konu", ""),
+                "referans": d.metadata.get("referans") or f"{d.metadata.get('source')} (Sayfa {d.metadata.get('page')})",
+                "puan": puan_sonucu["puan"],
+                "gerekce": puan_sonucu["gerekce"],
+                "icerik": d.page_content.strip()
+            }
+
+            if puan_sonucu["gecerli"]:
+                destekleyen_chunklar.append({"doc": d, "info": chunk_ozet})
+            else:
+                elenen_chunklar.append(chunk_ozet)
+
+        # Destekleyen parçalara göre filtrelenmiş doc listeleri oluştur
+        destek_doc_ids = {item["info"]["chunk_id"] for item in destekleyen_chunklar}
+        bilgi_docs = [d for d in raw_bilgi_docs if (d.metadata.get("chunk_id") or f"{d.metadata.get('source')}_{d.metadata.get('page')}_{hashlib.md5(d.page_content.encode('utf-8')).hexdigest()[:8]}") in destek_doc_ids]
+        pedagoji_docs = [d for d in raw_pedagoji_docs if (d.metadata.get("chunk_id") or f"{d.metadata.get('source')}_{d.metadata.get('page')}_{hashlib.md5(d.page_content.encode('utf-8')).hexdigest()[:8]}") in destek_doc_ids]
+        olcme_docs = [d for d in raw_olcme_docs if (d.metadata.get("chunk_id") or f"{d.metadata.get('source')}_{d.metadata.get('page')}_{hashlib.md5(d.page_content.encode('utf-8')).hexdigest()[:8]}") in destek_doc_ids]
+
+        # Eğer bir sorgu grubu tamamen elendiyse ancak genel destekleyen parça varsa, en iyi destekleyenle besle
+        if not bilgi_docs and destekleyen_chunklar:
+            bilgi_docs = [destekleyen_chunklar[0]["doc"]]
+        if not pedagoji_docs and destekleyen_chunklar:
+            pedagoji_docs = [destekleyen_chunklar[min(1, len(destekleyen_chunklar)-1)]["doc"]]
+        if not olcme_docs and destekleyen_chunklar:
+            olcme_docs = [destekleyen_chunklar[-1]["doc"]]
 
         def _formatla(docs: List[Document], baslangic_etiket: str = "K") -> Dict[str, Any]:
             parcalar = []
@@ -448,35 +596,44 @@ class RAGMotoru:
                 "dokumanlar": docs
             }
 
-        en_iyi_referans = None
-        for d in (bilgi_docs + pedagoji_docs + olcme_docs):
-            if d and d.metadata.get("referans"):
-                en_iyi_referans = d.metadata["referans"]
-                break
+        # En iyi doğrulanmış referans ve destek durumu belirleme
+        if destekleyen_chunklar:
+            en_iyi_referans = destekleyen_chunklar[0]["info"]["referans"]
+            kaynak_destek_durumu = "tam_destekli" if len(destekleyen_chunklar) >= 2 else "kismi_destekli"
+        else:
+            en_iyi_referans = "Doğrulanmış RAG eşleşmesi bulunamadı"
+            kaynak_destek_durumu = "destek_yok"
+
+        # Yalnızca doğrulanmış destekleyen parçaları kaynakça havuzuna gönder
+        dogrulanmis_tum_kaynaklar = [
+            {
+                "kaynak": item["info"]["kaynak"],
+                "dosya_adi": item["info"]["kaynak"],
+                "kitap_adi": item["doc"].metadata.get("kitap_adi") or item["info"]["kaynak"],
+                "sinif": item["doc"].metadata.get("sinif", ""),
+                "unite": item["doc"].metadata.get("unite", ""),
+                "konu": item["doc"].metadata.get("konu", ""),
+                "alt_konu": item["doc"].metadata.get("alt_konu", ""),
+                "sayfa": item["info"]["sayfa"],
+                "physical_page": item["info"]["physical_page"],
+                "printed_page": item["info"]["printed_page"],
+                "has_printed_page": item["doc"].metadata.get("has_printed_page", False),
+                "referans": item["info"]["referans"],
+                "chunk_id": item["info"]["chunk_id"],
+            }
+            for item in destekleyen_chunklar
+        ]
 
         return {
             "bilgi": _formatla(bilgi_docs, "B"),
             "pedagoji": _formatla(pedagoji_docs, "P"),
             "olcme_degerlendirme": _formatla(olcme_docs, "O"),
             "en_iyi_referans": en_iyi_referans,
-            "tum_kaynaklar": [
-                {
-                    "kaynak": d.metadata.get("source"),
-                    "dosya_adi": d.metadata.get("source"),
-                    "kitap_adi": d.metadata.get("kitap_adi") or d.metadata.get("source"),
-                    "sinif": d.metadata.get("sinif", ""),
-                    "unite": d.metadata.get("unite", ""),
-                    "konu": d.metadata.get("konu", ""),
-                    "alt_konu": d.metadata.get("alt_konu", ""),
-                    "sayfa": d.metadata.get("page"),
-                    "physical_page": d.metadata.get("physical_page") if d.metadata.get("physical_page") is not None else d.metadata.get("page"),
-                    "printed_page": d.metadata.get("printed_page") if d.metadata.get("has_printed_page") else None,
-                    "has_printed_page": d.metadata.get("has_printed_page", False),
-                    "referans": d.metadata.get("referans"),
-                    "chunk_id": d.metadata.get("chunk_id", ""),
-                }
-                for d in (bilgi_docs + pedagoji_docs + olcme_docs)
-            ]
+            "kaynak_destek_durumu": kaynak_destek_durumu,
+            "rag_sorgulari": rag_sorgulari,
+            "destekleyen_chunklar": [item["info"] for item in destekleyen_chunklar],
+            "elenen_chunklar": elenen_chunklar,
+            "tum_kaynaklar": dogrulanmis_tum_kaynaklar
         }
 
     def soru_formatlarini_getir(

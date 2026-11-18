@@ -615,7 +615,7 @@ class PDFGenerator:
             flowables.append(Spacer(1, 5))
 
             # Düzenlenmiş Konu Anlatımı (Ders Kitabı Referanslı)
-            duzenli_anlatim = bolum.get("duzenlenmis_anlatim", "")
+            duzenli_anlatim = bolum.get("pedagojik_anlatim") or bolum.get("duzenlenmis_anlatim", "")
             d_para = Paragraph(duzenli_anlatim, self.style_pedagogical)
             d_box = self._kutu_olustur("2. Düzenlenmiş Konu Anlatımı (Ders Kitabı Referanslı):", d_para, "#eff6ff", "#93c5fd")
             flowables.append(d_box)

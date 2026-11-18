@@ -45,10 +45,10 @@ DEFAULT_SEVIYE = "İlkokul"
 
 # --- GOOGLE GEMINI API AYARLARI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "20"))
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
-_gemini_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-flash-latest")
+_gemini_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-lite-latest,gemini-3.8-flash,gemini-flash-latest")
 GEMINI_FALLBACK_MODELS = [m.strip() for m in _gemini_fallbacks.split(",") if m.strip()]
 
 # --- OLLAMA VE LOKAL MODEL AYARLARI (Birincil Model) ---

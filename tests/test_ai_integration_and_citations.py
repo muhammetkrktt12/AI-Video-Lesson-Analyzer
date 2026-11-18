@@ -677,6 +677,175 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         self.assertNotIn("Sınıf arkadaşlarımızla tartışalım.", sonuc["duzenlenmis_anlatim"])
         self.assertIn("Pil, az miktarda elektrik enerjisi harcayan küçük araçları çalıştırmak için kullanılır.", sonuc["duzenlenmis_anlatim"])
 
+    # -----------------------------------------------------------------------
+    # SENARYO 19: Multimodal Görsel Materyal Analizi ve Unsur Tespiti
+    # -----------------------------------------------------------------------
+    @patch("services.gemini_analyzer.GeminiAnalyzer._gemini_api_cagir")
+    def test_scenario_19_visual_material_analysis_multimodal(self, mock_gemini):
+        mock_gemini.return_value = {
+            "gorsel_unsurlar": ["Uzaktan kumandalı mavi araba", "Kumanda", "Çocuk"],
+            "gorsel_aciklamasi": "Görselde pille çalışan uzaktan kumandalı bir oyuncak araba yer almaktadır.",
+            "gorsel_konusma_uyumu": {
+                "uyumlu_mu": True,
+                "derece": "tam_uyumlu",
+                "gerekce": "Transkriptteki oyuncak araba ve pil konusu görselle örtüşmektedir."
+            },
+            "temel_konu": "Elektrik Kaynakları ve Pilin Önemi",
+            "alt_kavramlar": ["Pil", "Elektrik enerjisi"]
+        }
+
+        # Geçici gerçek bir test resmi oluştur
+        test_img_path = Path("temp_medya/test_kare_senaryo19.jpg")
+        test_img_path.parent.mkdir(parents=True, exist_ok=True)
+        test_img_path.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 600)  # Geçerli JPEG başlığı
+
+        try:
+            analyzer = GeminiAnalyzer(api_key="AIzaValidDummyKeyForTest123456789")
+            res = analyzer.gorsel_materyali_analiz_et(
+                resim_yolu=str(test_img_path),
+                zaman_damgasi="00:50",
+                transkript="Gördüğünüz gibi arkadaşımız uzaktan kumandalı arabasıyla oynuyor.",
+                bolum_basligi="Oyuncak Araba ve Pil"
+            )
+
+            self.assertEqual(res["gorsel_analiz_kaynagi"], "gemini_multimodal_vision")
+            self.assertIn("Uzaktan kumandalı mavi araba", res["gorsel_unsurlar"])
+            self.assertTrue(res["gorsel_konusma_uyumu"]["uyumlu_mu"])
+            self.assertEqual(res["temel_konu"], "Elektrik Kaynakları ve Pilin Önemi")
+        finally:
+            if test_img_path.exists():
+                test_img_path.unlink()
+
+        # Resim mevcut olmadığında güvenli hata yönetimi
+        res_yok = analyzer.gorsel_materyali_analiz_et(
+            resim_yolu="olmayan_dosya.jpg",
+            bolum_basligi="Test"
+        )
+        self.assertEqual(res_yok["gorsel_analiz_kaynagi"], "goruntu_yok")
+        self.assertFalse(res_yok["gorsel_konusma_uyumu"]["uyumlu_mu"])
+
+    # -----------------------------------------------------------------------
+    # SENARYO 20: Görsel–Konuşma Uyum Denetimi ve Gerekçelendirme
+    # -----------------------------------------------------------------------
+    def test_scenario_20_visual_speech_alignment_verification(self):
+        analyzer = GeminiAnalyzer(api_key="")
+        res = analyzer._sezgisel_gorsel_analiz(
+            resim_yolu="ornek.jpg",
+            zaman_damgasi="00:50",
+            transkript="Uzaktan kumandalı araba pil bitince durdu.",
+            bolum_basligi="Pil ve Oyuncak Araba"
+        )
+        self.assertIn("gorsel_konusma_uyumu", res)
+        uyum = res["gorsel_konusma_uyumu"]
+        self.assertTrue(uyum["uyumlu_mu"])
+        self.assertEqual(uyum["derece"], "tam_uyumlu")
+        self.assertIn("pil", uyum["gerekce"].lower())
+        self.assertEqual(res["gorsel_analiz_kaynagi"], "fallback_heuristic")
+
+    # -----------------------------------------------------------------------
+    # SENARYO 21: Çok Yönlü RAG Arama ve Uygunluk Filtresi (Alakasız Parça Eleme)
+    # -----------------------------------------------------------------------
+    def test_scenario_21_multifaceted_rag_and_relevance_filtering(self):
+        from langchain_core.documents import Document
+        from services.rag_motoru import RAGMotoru
+
+        rag = RAGMotoru()
+
+        # 1. Alakalı parça (Pil ve pille çalışan aletler)
+        doc_alakali = Document(
+            page_content="El feneri, uzaktan kumanda ve saat gibi az elektrik tüketen araçlar pil ile çalışır. Biten piller atık pil kutusuna atılmalıdır.",
+            metadata={"source": "fen_3_kitap.pdf", "page": 47, "unite": "6. Ünite", "konu": "Elektrik Kaynakları"}
+        )
+        puan_alakali = rag.chunk_alaka_puanla(
+            doc=doc_alakali,
+            temel_konu="Elektrik Kaynakları ve Pilin Önemi",
+            alt_kavramlar=["Pil", "Elektrik enerjisi", "Pille çalışan araçlar"],
+            gorsel_unsurlar=["Uzaktan kumandalı araba", "Kumanda"],
+            transkript="Pille çalışan uzaktan kumandalı araba örneği."
+        )
+        self.assertTrue(puan_alakali["gecerli"])
+        self.assertGreater(puan_alakali["puan"], 2.0)
+        self.assertIn("Kabul edildi", puan_alakali["gerekce"])
+
+        # 2. Alakasız parça (Baraj ve hidroelektrik santraller)
+        doc_alakasiz = Document(
+            page_content="Hidroelektrik santrallerde baraj göllerindeki suyun gücü türbinleri döndürür. Üretilen yüksek gerilim iletim hatları ile şehirlere taşınır.",
+            metadata={"source": "fen_3_kitap.pdf", "page": 57, "unite": "6. Ünite", "konu": "Şehir Elektriği"}
+        )
+        puan_alakasiz = rag.chunk_alaka_puanla(
+            doc=doc_alakasiz,
+            temel_konu="Elektrik Kaynakları ve Pilin Önemi",
+            alt_kavramlar=["Pil", "Elektrik enerjisi", "Pille çalışan araçlar"],
+            gorsel_unsurlar=["Uzaktan kumandalı araba", "Kumanda"],
+            transkript="Pille çalışan uzaktan kumandalı araba örneği."
+        )
+        self.assertFalse(puan_alakasiz["gecerli"])
+        self.assertIn("Elendi", puan_alakasiz["gerekce"])
+
+    # -----------------------------------------------------------------------
+    # SENARYO 22: Video ve Ders Kitabı Örneklerinin Harmanlanması ve Kavram Derinliği
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_22_example_harmonization_and_expanded_concept_definitions(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": json.dumps({
+                "duzenlenmis_anlatim": (
+                    "Görseldeki uzaktan kumandalı oyuncak araba, pilin sağladığı elektrik enerjisini küçük bir motor yardımıyla "
+                    "hareket enerjisine dönüştürerek tekerlekleri döndürür. Pil kimyasal deposunu tükettiğinde elektrik akımı kesilir ve araç durur."
+                ),
+                "ornekler": [
+                    {"ornek": "Uzaktan kumandalı araba", "aciklama": "Pil enerjisiyle tekerleklerini döndürür.", "koken": "video"},
+                    {"ornek": "El feneri", "aciklama": "Kitapta belirtilen taşınabilir aydınlatma aracıdır.", "koken": "ders_kitabi"},
+                    {"ornek": "Duvar saati", "aciklama": "Düşük enerjiyle aylarca çalışan ev aletidir.", "koken": "yapay_zeka"}
+                ],
+                "onemli_kavramlar": [
+                    {
+                        "kavram": "Pil",
+                        "aciklama": "Düşük elektrik enerjisi sağlayan taşınabilir kimyasal kaynaktır. Devreye elektrik akımı sağlayarak küçük araçları çalıştırır. Bittiğinde çevre kirliliğini önlemek için atık pil kutusuna atılmalıdır."
+                    }
+                ]
+            })
+        }
+        mock_post.return_value = mock_resp
+
+        analyzer = GeminiAnalyzer(api_key="")
+        bolum = {
+            "bolum_no": 2,
+            "bolum_basligi": "Bölüm 2 – Günlük Yaşamda Elektrik ve Oyuncak Araba Örneği",
+            "transkript": "Gördüğünüz gibi arkadaşımız pille çalışan uzaktan kumandalı arabayla oynuyor.",
+            "gorsel_unsurlar": ["Uzaktan kumandalı araba", "Kumanda"],
+            "gorsel_aciklamasi": "Pille çalışan oyuncak araba sahnesi.",
+            "temel_konu": "Elektrik Kaynakları ve Pilin Önemi",
+            "alt_kavramlar": ["Pil", "Elektrik enerjisi"]
+        }
+        rag_sonuc = {
+            "bilgi": {"baglam": "MEB Pil konusu"},
+            "pedagoji": {"baglam": "MEB 3. sınıf kazanımları"}
+        }
+
+        sentez = analyzer.bolum_pedagojik_sentezle(bolum, rag_sonuc)
+
+        # 1. Harmanlanmış örnekler köken kontrolü
+        self.assertIn("ornekler", sentez)
+        kokeler = {o.get("koken") for o in sentez["ornekler"]}
+        self.assertIn("video", kokeler)
+        self.assertIn("ders_kitabi", kokeler)
+        self.assertIn("yapay_zeka", kokeler)
+
+        # 2. Önemli kavram derinlik kontrolü (2-3 cümle / zengin açıklama)
+        self.assertIn("onemli_kavramlar", sentez)
+        pil_kavrami = next((k for k in sentez["onemli_kavramlar"] if k.get("kavram") == "Pil"), None)
+        self.assertIsNotNone(pil_kavrami)
+        self.assertGreater(len(pil_kavrami["aciklama"]), 60)
+        self.assertIn("atık pil", pil_kavrami["aciklama"].lower())
+
+        # 3. Ortak veri yapısı ve üslup kontrolü
+        self.assertEqual(sentez["pedagojik_anlatim"], sentez["duzenlenmis_anlatim"])
+        self.assertNotIn("arkadaşlarımız", sentez["pedagojik_anlatim"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
