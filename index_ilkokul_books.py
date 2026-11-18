@@ -185,7 +185,8 @@ def main():
         book_skipped = 0
 
         for phys_page_no in range(1, total_pages + 1):
-            printed_page_no = max(1, phys_page_no - page_offset)
+            has_printed = phys_page_no > page_offset
+            printed_page_no = (phys_page_no - page_offset) if has_printed else 0
             try:
                 raw_text = (reader.pages[phys_page_no - 1].extract_text() or "").strip()
             except Exception:
@@ -205,14 +206,17 @@ def main():
                 print(f" [UYARI] Sayfa {phys_page_no} metadata hatası: {meta_err}")
                 continue
 
-            ref = f"{base_meta['kitap_adi']} - {unite}, '{konu}' ({alt_konu}) [Sayfa {printed_page_no}]"
+            if has_printed:
+                ref = f"{base_meta['kitap_adi']} - {unite}, '{konu}' ({alt_konu}) [Sayfa {printed_page_no}]"
+            else:
+                ref = f"{base_meta['kitap_adi']} - {unite}, '{konu}' ({alt_konu}) [Fiziksel Sayfa {phys_page_no}]"
             chunks = splitter.split_text(raw_text)
 
             for c_idx, c_text in enumerate(chunks):
                 if len(c_text.strip()) < 20:
                     continue
 
-                cid = generate_chunk_id(fname, f_hash, printed_page_no, c_idx)
+                cid = generate_chunk_id(fname, f_hash, phys_page_no, c_idx)
 
                 # Eğer chunk halihazırda veritabanında varsa ATLA (Tekrar çalıştırma güvenliği)
                 if cid in existing_ids:
@@ -230,6 +234,7 @@ def main():
                     "printed_page": printed_page_no,
                     "page": printed_page_no,
                     "sayfa_no": printed_page_no,
+                    "has_printed_page": has_printed,
                     "unite": unite,
                     "konu": konu,
                     "alt_konu": alt_konu,
@@ -250,6 +255,16 @@ def main():
             print(f" ✓ Bu kitap zaten tamamen güncel ({book_skipped} parça mevcut).")
             continue
 
+        # Yazma öncesi çakışma kontrolü (Pre-write collision check)
+        if len(book_ids) != len(set(book_ids)):
+            seen_ids = set()
+            duplicates = [cid for cid in book_ids if cid in seen_ids or seen_ids.add(cid)]
+            raise ValueError(
+                f"[KRİTİK HATA] {fname} için üretilen chunk ID'lerinde çakışma tespit edildi! "
+                f"Toplam ID: {len(book_ids)}, Benzersiz: {len(set(book_ids))}. "
+                f"Çakışan ilk ID'ler: {duplicates[:5]}"
+            )
+
         print(f" -> Eklenecek {len(book_docs)} yeni parça tespit edildi. 768-D Vektörleştirme başlıyor...")
 
         # Batch ekleme ve Hata Yönetimi
@@ -267,9 +282,16 @@ def main():
             progress = min(i + batch_size, len(book_docs))
             print(f"    [{progress}/{len(book_docs)}] parça yüklendi...", end="\r", flush=True)
 
+        # Veritabanında doğrulanan gerçek kayıt sayısını kontrol et
+        try:
+            verified_records = store._collection.get(ids=book_ids, include=[])
+            verified_count = len(verified_records["ids"]) if (verified_records and verified_records.get("ids")) else 0
+        except Exception:
+            verified_count = -1
+
         book_elapsed = round(time.time() - t_book_start, 1)
         total_newly_indexed += book_success
-        print(f"\n ✓ {kitap_adi} tamamlandı ({book_success} yeni parça eklendi, {book_elapsed} sn).")
+        print(f"\n ✓ {kitap_adi} tamamlandı ({book_success} parça sunuldu, DB'de doğrulanan: {verified_count}, {book_elapsed} sn).")
 
         # Güvenlik Kuralı: Eski sürüm kayıtlarını YALNIZCA yeni indeksleme eksiksiz tamamlandıysa temizle!
         book_has_failure = any(f.get("chunk_id", "").startswith(fname) for f in all_failed_items)
@@ -283,7 +305,7 @@ def main():
     total_elapsed = round(time.time() - t_start, 1)
     print("\n" + "=" * 75)
     print("🎉 İNDEKSLEME RAPORU")
-    print(f" -> Yeni Eklenen Parça   : {total_newly_indexed}")
+    print(f" -> Yeni Eklenen (Sunulan) : {total_newly_indexed}")
     print(f" -> Atlanan (Mevcut)     : {total_skipped}")
     print(f" -> Başarısız Parça      : {len(all_failed_items)}")
     if all_failed_items:

@@ -35,9 +35,9 @@ def calculate_file_hash(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
-def generate_chunk_id(filename: str, file_hash: str, page_no: int, chunk_idx: int) -> str:
-    """Tekrarlanabilir, dosya sürümüne ve sayfa numarasına duyarlı Chunk ID üretir."""
-    return f"{filename}:{file_hash[:12]}:p{page_no:04d}:c{chunk_idx:03d}"
+def generate_chunk_id(filename: str, file_hash: str, physical_page: int, chunk_idx: int) -> str:
+    """Tekrarlanabilir, dosya sürümüne ve fiziksel sayfa numarasına duyarlı benzersiz Chunk ID üretir."""
+    return f"{filename}:{file_hash[:12]}:phys_{physical_page:04d}:c{chunk_idx:03d}"
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +209,9 @@ def get_book_metadata_and_unit(
             "egitim_seviyesi": manifest["seviye"],
             "source": filename
         }
+        if printed_page_no <= 0:
+            return base_meta, "Ön Sayfalar", "Kapak ve Tanıtım", "Kapak / Künye"
+
         for start_p, end_p, u_title, k_title, a_title in manifest["uniteler"]:
             if start_p <= printed_page_no <= end_p:
                 return base_meta, u_title, k_title, a_title
@@ -343,7 +346,9 @@ def cleanup_stale_chunks(store: Chroma, filename: str, current_hash: str) -> int
         stale_ids = []
         for cid, meta in zip(res["ids"], res["metadatas"]):
             file_h = meta.get("file_hash", "")
-            if file_h and file_h != target_hash_prefix:
+            is_stale_hash = bool(file_h and file_h != target_hash_prefix)
+            is_legacy_schema = bool(":p" in cid and ":phys_" not in cid)
+            if is_stale_hash or is_legacy_schema:
                 stale_ids.append(cid)
 
         if stale_ids:

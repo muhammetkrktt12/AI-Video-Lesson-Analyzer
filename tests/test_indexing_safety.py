@@ -88,6 +88,31 @@ class TestIndexingSafety(unittest.TestCase):
         self.assertEqual(deleted_count, 1)
         mock_col.delete.assert_called_once_with(ids=["c2"])
 
+    def test_06_cleanup_stale_chunks_cleans_legacy_schema_with_same_hash(self):
+        """cleanup_stale_chunks aynı hash'e sahip olsa dahi eski :pXXXX: şemalı ID'leri tespit edip temizler."""
+        mock_store = MagicMock()
+        mock_col = MagicMock()
+        mock_store._collection = mock_col
+
+        current_hash = "421c34396672abcdef"
+        current_prefix = current_hash[:12]
+
+        # 1 adet yeni şema (:phys_), 1 adet eski şema (:p) - her ikisi de aynı güncel hash'e sahip
+        new_schema_id = f"kitap.pdf:{current_prefix}:phys_0049:c000"
+        legacy_schema_id = f"kitap.pdf:{current_prefix}:p0048:c000"
+
+        mock_col.get.return_value = {
+            "ids": [new_schema_id, legacy_schema_id],
+            "metadatas": [
+                {"source": "kitap.pdf", "file_hash": current_prefix},
+                {"source": "kitap.pdf", "file_hash": current_prefix},
+            ]
+        }
+
+        deleted_count = cleanup_stale_chunks(mock_store, "kitap.pdf", current_hash)
+        self.assertEqual(deleted_count, 1)
+        mock_col.delete.assert_called_once_with(ids=[legacy_schema_id])
+
 
 if __name__ == "__main__":
     unittest.main()
