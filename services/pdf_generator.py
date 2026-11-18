@@ -408,6 +408,7 @@ class PDFGenerator:
                     prn_page = r.get("printed_page") if r.get("has_printed_page") else None
 
                     key = f"{k_adi}_{dosya}_{phys_page}_{unite}_{konu}".strip().lower()
+                    kaynak_rolu = r.get("kaynak_rolu") or "ana_kaynak"
                     if key not in kaynak_havuzu:
                         kaynak_havuzu[key] = {
                             "kitap_adi": k_adi,
@@ -417,6 +418,7 @@ class PDFGenerator:
                             "konu": konu,
                             "physical_page": phys_page,
                             "printed_page": prn_page,
+                            "kaynak_rolu": kaynak_rolu,
                             "kullanildigi_yerler": set(),
                         }
                     kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
@@ -430,6 +432,7 @@ class PDFGenerator:
                 if key not in kaynak_havuzu:
                     kaynak_havuzu[key] = {
                         "ham_referans": b_ref,
+                        "kaynak_rolu": "ana_kaynak",
                         "kullanildigi_yerler": set(),
                     }
                 kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
@@ -449,6 +452,7 @@ class PDFGenerator:
                 konu = s_rag.get("konu", "")
                 phys_page = s_rag.get("physical_page") if s_rag.get("physical_page") is not None else s_rag.get("sayfa")
                 prn_page = s_rag.get("printed_page") if s_rag.get("has_printed_page") else None
+                kaynak_rolu = s_rag.get("kaynak_rolu") or "ana_kaynak"
 
                 key = f"{k_adi}_{dosya}_{phys_page}_{unite}_{konu}".strip().lower()
                 if key not in kaynak_havuzu:
@@ -460,6 +464,7 @@ class PDFGenerator:
                         "konu": konu,
                         "physical_page": phys_page,
                         "printed_page": prn_page,
+                        "kaynak_rolu": kaynak_rolu,
                         "kullanildigi_yerler": set(),
                     }
                 kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
@@ -473,6 +478,7 @@ class PDFGenerator:
                 if key not in kaynak_havuzu:
                     kaynak_havuzu[key] = {
                         "ham_referans": s_ref,
+                        "kaynak_rolu": "ana_kaynak",
                         "kullanildigi_yerler": set(),
                     }
                 kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
@@ -481,18 +487,22 @@ class PDFGenerator:
         if not kaynak_havuzu:
             return ["<i>Bu bölüm için doğrulanmış ders kitabı kaynağı bulunamadı.</i>"]
 
-        # 4. Kaynakları formatla ve sırala
+        # 4. Kaynakları formatla ve sırala (Ana kaynaklar önce)
+        havuz_listesi = list(kaynak_havuzu.values())
+        havuz_listesi.sort(key=lambda x: (0 if x.get("kaynak_rolu") == "ana_kaynak" else 1, x.get("printed_page") or 999))
+
         cikti_kaynaklar = []
-        for idx, (k, info) in enumerate(kaynak_havuzu.items(), 1):
+        for idx, info in enumerate(havuz_listesi, 1):
             yerler_sirali = sorted(
                 list(info["kullanildigi_yerler"]),
                 key=lambda x: (x.split()[0], int(x.split()[1]) if len(x.split()) > 1 and x.split()[1].isdigit() else 0)
             )
             yerler_str = ", ".join(yerler_sirali)
+            rol_badge = " [Ana Kaynak]" if info.get("kaynak_rolu") == "ana_kaynak" else (" [Yardımcı Kaynak]" if info.get("kaynak_rolu") == "yardimci_kaynak" else "")
 
             if "ham_referans" in info:
                 cikti_kaynaklar.append(
-                    f"<b>{idx}.</b> {info['ham_referans']} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
+                    f"<b>{idx}.</b> {info['ham_referans']}{rol_badge} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
                 )
             else:
                 k_ad = info.get("kitap_adi") or "MEB Ders Kitabı"
@@ -514,7 +524,7 @@ class PDFGenerator:
                 sayfa_str = f" [{', '.join(sayfa_parcalari)}]" if sayfa_parcalari else ""
 
                 cikti_kaynaklar.append(
-                    f"<b>{idx}. {k_ad}</b>{d_ad}{sinif_str}{unite_str}{sayfa_str} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
+                    f"<b>{idx}. {k_ad}</b>{d_ad}{sinif_str}{unite_str}{sayfa_str}{rol_badge} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
                 )
 
         return cikti_kaynaklar

@@ -268,6 +268,8 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
 
         bolum["rag_sorgulari"] = rag_sonuc.get("rag_sorgulari", [])
         bolum["destekleyen_chunklar"] = rag_sonuc.get("destekleyen_chunklar", [])
+        bolum["ana_kaynaklar"] = rag_sonuc.get("ana_kaynaklar", [])
+        bolum["yardimci_kaynaklar"] = rag_sonuc.get("yardimci_kaynaklar", [])
         bolum["elenen_chunklar"] = rag_sonuc.get("elenen_chunklar", [])
         bolum["kaynak_destek_durumu"] = rag_sonuc.get("kaynak_destek_durumu", "destek_yok")
 

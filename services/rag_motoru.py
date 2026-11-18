@@ -339,6 +339,19 @@ class RAGMotoru:
         print(f"[BAŞARILI] '{dosya_adi}' başarıyla indekslendi ({toplam} parça).\n")
         return toplam
 
+    @staticmethod
+    def sinif_normalize(sinif: Optional[str]) -> Optional[str]:
+        """
+        Sınıf seviyesini veritabanındaki standart formatta normalize eder (Örn: '3', '3.sınıf' -> '3. Sınıf').
+        """
+        if not sinif:
+            return None
+        val = str(sinif).strip()
+        m = re.search(r"(\d+)", val)
+        if m:
+            return f"{m.group(1)}. Sınıf"
+        return val
+
     def seviye_filtreli_arama(
         self,
         sorgu: str,
@@ -347,47 +360,67 @@ class RAGMotoru:
         ders_adi: Optional[str] = None,
         k: int = 4,
         rerank: bool = True,
+        allow_cross_grade: bool = False,
     ) -> List[Document]:
         """
         Kullanıcının seçtiği eğitim seviyesine ve sınıf düzeyine ait belgeler arasında
-        anlamsal arama yapar.
+        anlamsal ve sözcüksel arama yapar.
 
-        KALİTE KURALI (d6_01_rerank.py & quality_utils.py):
-        1. Vektör veritabanından 'sinif' veya 'egitim_seviyesi' filtresiyle geniş bir aday havuzu çekilir.
-        2. Çekilen adaylar 'lexical_similarity_test' 3-gram Türkçe Jaccard sözcüksel benzerliği ile
-           yeniden sıralanır (reranking) ve en kaliteli 'k' adet doküman döndürülür.
+        KATI SINIF İZOLASYONU VE KALİTE KURALI:
+        1. sinif belirtilmişse (Örn. '3. Sınıf'), arama en baştan itibaren SADECE o sınıfla sınırlandırılır.
+        2. allow_cross_grade=False (varsayılan) iken, 3. sınıf aramasında asla 4. sınıf veya başka kademe belgeleri dönmez.
+        3. Vektör aramasından gerçek skor/mesafe alınır (vektor_skoru, vektor_mesafesi).
+        4. Vektör servisi çevrimdışıysa lexical fallback devreye girer; vektor_skoru=None olarak saklanır.
+        5. Aday dokümanlar 3-gram Türkçe Jaccard lexical reranking ile sıralanır.
         """
         store = self.get_vector_store()
         aday_sayisi = max(k * 3, 10) if rerank and lexical_rerank else k
+        norm_sinif = self.sinif_normalize(sinif)
 
-        adaylar = []
-        # 1. Öncelik: Sınıf seviyesi (Örn. '3. Sınıf', '10. Sınıf') filtresi
-        if sinif:
+        # 1. Filtre Belirleme (Sınıf izolasyonu öncelikli)
+        if norm_sinif:
+            where_filter = {"sinif": norm_sinif}
+        elif egitim_seviyesi in EGITIM_SEVIYELERI:
+            where_filter = {"egitim_seviyesi": egitim_seviyesi}
+        else:
+            where_filter = None
+
+        adaylar: List[Document] = []
+
+        # 2. Vektör Araması Denemesi (Gerçek skorlarla)
+        try:
+            results_with_scores = store.similarity_search_with_score(query=sorgu, k=aday_sayisi, filter=where_filter)
+            for doc, dist in results_with_scores:
+                doc.metadata["arama_yontemi"] = "vektor_benzerligi"
+                doc.metadata["vektor_mesafesi"] = round(float(dist), 4)
+                # Chroma cosine distance [0, 2] -> similarity [0, 1]
+                sim = max(0.0, min(1.0, 1.0 - (float(dist) / 2.0 if dist > 1.0 else float(dist))))
+                doc.metadata["vektor_skoru"] = round(sim, 4)
+                adaylar.append(doc)
+        except Exception:
+            adaylar = []
+
+        # 3. İkincil Arama: Eğer cross-grade izni varsa ve sınıf aramasında sonuç çıkmadıysa
+        if not adaylar and norm_sinif and allow_cross_grade:
+            filtre = {"egitim_seviyesi": egitim_seviyesi} if egitim_seviyesi in EGITIM_SEVIYELERI else None
             try:
-                adaylar = store.similarity_search(query=sorgu, k=aday_sayisi, filter={"sinif": sinif})
+                results_with_scores = store.similarity_search_with_score(query=sorgu, k=aday_sayisi, filter=filtre)
+                for doc, dist in results_with_scores:
+                    doc.metadata["arama_yontemi"] = "vektor_benzerligi"
+                    doc.metadata["vektor_mesafesi"] = round(float(dist), 4)
+                    sim = max(0.0, min(1.0, 1.0 - (float(dist) / 2.0 if dist > 1.0 else float(dist))))
+                    doc.metadata["vektor_skoru"] = round(sim, 4)
+                    if self.sinif_normalize(doc.metadata.get("sinif")) != norm_sinif:
+                        doc.metadata["cross_grade"] = True
+                    adaylar.append(doc)
             except Exception:
                 adaylar = []
 
-        # 2. İkincil: Eğer sınıf filtresi sonuç vermediyse genel eğitim kademesi filtresi
-        if not adaylar:
-            filtre = {"egitim_seviyesi": egitim_seviyesi} if egitim_seviyesi in EGITIM_SEVIYELERI else None
-            try:
-                adaylar = store.similarity_search(query=sorgu, k=aday_sayisi, filter=filtre)
-            except Exception as e:
-                print(f"[HATA] Filtreli ve rerank'li aramada sorun oluştu: {e}")
-                adaylar = []
-
-        # 3. Güvenlik Ağı: Eğer similarity_search başarısız olduysa (Ollama çevrimdışı veya sandbox kısıtı)
-        # ChromaDB SQLite koleksiyonundan doğrudan filtreli dokümanları çekip lexical_rerank ile sırala
+        # 4. Güvenlik Ağı / Fallback: Vektör servisi çevrimdışıysa doğrudan ChromaDB SQLite koleksiyonundan çek
         if not adaylar:
             try:
                 col = store._collection
-                where_clause = {}
-                if sinif:
-                    where_clause["sinif"] = sinif
-                elif egitim_seviyesi in EGITIM_SEVIYELERI:
-                    where_clause["egitim_seviyesi"] = egitim_seviyesi
-                res = col.get(where=where_clause if where_clause else None, include=["documents", "metadatas"])
+                res = col.get(where=where_filter if where_filter else None, include=["documents", "metadatas"])
                 if res and res.get("documents"):
                     raw_docs = []
                     sorgu_lower = sorgu.lower()
@@ -397,7 +430,11 @@ class RAGMotoru:
                         if any(x in unite or x in konu for x in ["ön sayfalar", "kapak", "içindekiler", "sözlük", "ekler", "kitap ekleri"]):
                             if not any(x in sorgu_lower for x in ["kapak", "künye", "içindekiler", "sözlük"]):
                                 continue
-                        raw_docs.append(Document(page_content=doc_text, metadata=meta))
+                        doc = Document(page_content=doc_text, metadata=meta)
+                        doc.metadata["arama_yontemi"] = "lexical_fallback"
+                        doc.metadata["vektor_mesafesi"] = None
+                        doc.metadata["vektor_skoru"] = None
+                        raw_docs.append(doc)
                     if raw_docs and lexical_rerank:
                         sirali = lexical_rerank(sorgu, raw_docs, lexical_agirlik=1.0, top_n=aday_sayisi)
                         adaylar = [d for d, s in sirali]
@@ -405,6 +442,11 @@ class RAGMotoru:
                         adaylar = raw_docs[:aday_sayisi]
             except Exception as direct_err:
                 print(f"[UYARI] Doğrudan collection get fallback hatası: {direct_err}")
+
+        # 5. KATI KURAL (Sınıf İzolasyonu Güvencesi):
+        # allow_cross_grade=False ise farklı sınıftan dokümanlar kesin olarak temizlenir.
+        if norm_sinif and not allow_cross_grade and adaylar:
+            adaylar = [d for d in adaylar if self.sinif_normalize(d.metadata.get("sinif")) == norm_sinif]
 
         if not adaylar:
             return []
@@ -422,16 +464,22 @@ class RAGMotoru:
         if temiz_adaylar:
             adaylar = temiz_adaylar
 
-        # 3-gram Türkçe Lexical Reranking Uygula (d6_01_rerank mantığı)
+        # 6. 3-gram Türkçe Lexical Reranking Uygula ve lexical skorları ata
         if rerank and lexical_rerank and len(adaylar) > 1:
             try:
                 sirali_adaylar = lexical_rerank(sorgu, adaylar, top_n=k)
-                sonuclar = [doc for doc, score in sirali_adaylar]
+                sonuclar = []
+                for doc, score in sirali_adaylar:
+                    doc.metadata["lexical_skoru"] = round(float(score), 4)
+                    sonuclar.append(doc)
                 return sonuclar
             except TypeError:
                 sirali_adaylar = lexical_rerank(sorgu, adaylar)
-                sonuclar = [doc for doc, score in sirali_adaylar]
-                return sonuclar[:k]
+                sonuclar = []
+                for doc, score in sirali_adaylar[:k]:
+                    doc.metadata["lexical_skoru"] = round(float(score), 4)
+                    sonuclar.append(doc)
+                return sonuclar
 
         return adaylar[:k]
 
@@ -442,18 +490,79 @@ class RAGMotoru:
         alt_kavramlar: Optional[List[str]] = None,
         gorsel_unsurlar: Optional[List[str]] = None,
         transkript: str = "",
+        hedef_sinif: Optional[str] = "3. Sınıf",
+        allow_cross_grade: bool = False,
     ) -> Dict[str, Any]:
         """
         Getirilen bir ders kitabı parçasının (chunk), sahnenin temel konusu, görsel unsurları
         ve alt kavramları ile anlamsal ilgisini değerlendirir.
-        Türkçe kelime sınırlarına duyarlı regex arama kullanır (morfolojik alt string hatalarını önler).
-        Alakasız veya konu dışı parçaları eler (örn: Pil/oyuncak araba konusundayken baraj/santral chunk'ı).
+
+        KATI KALİTE VE SINIF İZOLASYONU:
+        1. Sınıf İzolasyonu: Farklı sınıf parçaları (örn. 3. sınıf sorgusunda 4. sınıf) allow_cross_grade=False
+           olduğunda derhal elenir (konu_disi).
+        2. Ünite ve Konu Bütünlüğü: İlgisiz üniteler (örn. Elektrik konusunda 'Besinlerimiz' veya 'Kuvvetin Etkileri')
+           içerisinde geçen benzer kelimeler (oyuncak araba vb.) sahte eşleşme olarak elenir.
+        3. Kaynak Rolü Ayrımı:
+           - 'ana_kaynak': Temel konuyu/mekanizmayı doğrudan açıklayan birinci derece metin (Sayfa 48).
+           - 'yardimci_kaynak': Güvenlik, atık pil, tasarruf gibi tamamlayıcı metinler (Sayfa 57).
+           - 'konu_disi': Farklı ünite/sınıf veya alakasız bağlam.
+        4. Dürüst Skorlama: Vektör skoru uydurulmaz (varsa float, yoksa None).
         """
         c_text = doc.page_content or ""
         meta = doc.metadata or {}
-        konu_meta = f"{meta.get('unite', '')} {meta.get('konu', '')} {meta.get('alt_konu', '')}"
-        full_doc = f"{c_text} {konu_meta}"
+        unite = str(meta.get("unite", "")).strip()
+        konu = str(meta.get("konu", "")).strip()
+        alt_konu = str(meta.get("alt_konu", "")).strip()
+        doc_sinif = self.sinif_normalize(meta.get("sinif"))
+        hedef_norm_sinif = self.sinif_normalize(hedef_sinif)
 
+        arama_yontemi = meta.get("arama_yontemi", "lexical_fallback")
+        vektor_mesafesi = meta.get("vektor_mesafesi")
+        vektor_skoru = meta.get("vektor_skoru")
+        lexical_skor = meta.get("lexical_skoru")
+
+        # 1. Aşama: Sınıf İzolasyonu Kontrolü
+        is_cross_grade = (hedef_norm_sinif is not None and doc_sinif is not None and doc_sinif != hedef_norm_sinif)
+        if is_cross_grade and not allow_cross_grade:
+            return {
+                "gecerli": False,
+                "puan": 0.0,
+                "vektor_skoru": vektor_skoru,
+                "vektor_mesafesi": vektor_mesafesi,
+                "arama_yontemi": arama_yontemi,
+                "lexical_skor": lexical_skor,
+                "konu_uygunluk_skoru": 0.0,
+                "kaynak_rolu": "konu_disi",
+                "kaynak_destek_durumu": "destek_yok",
+                "gerekce": f"Elendi: Farklı sınıf seviyesi (Hedef: {hedef_norm_sinif}, Kaynak: {doc_sinif})",
+            }
+
+        # 2. Aşama: Ünite ve Konu Uygunluğu Kontrolü
+        unite_lower = unite.lower()
+        konu_lower = konu.lower()
+        alt_konu_lower = alt_konu.lower()
+        temel_lower = (temel_konu or "").lower()
+        tr_lower = (transkript or "")[:400].lower()
+        all_concepts = [k.lower() for k in (alt_kavramlar or [])]
+
+        is_elektrik_baglami = any(w in temel_lower or any(w in c for c in all_concepts) or w in tr_lower for w in ["elektrik", "pil", "batarya", "akü", "santral", "enerji"])
+        ilgisiz_uniteler = ["besinlerimiz", "kuvvetin etkileri", "maddenin özellikleri", "maddeyi tanıyalım", "canlılar dünyası", "yer kabuğu", "toprağı tanıyorum", "yaşam alanları"]
+
+        if is_elektrik_baglami and any(iu in unite_lower for iu in ilgisiz_uniteler):
+            return {
+                "gecerli": False,
+                "puan": 0.0,
+                "vektor_skoru": vektor_skoru,
+                "vektor_mesafesi": vektor_mesafesi,
+                "arama_yontemi": arama_yontemi,
+                "lexical_skor": lexical_skor,
+                "konu_uygunluk_skoru": 0.0,
+                "kaynak_rolu": "konu_disi",
+                "kaynak_destek_durumu": "destek_yok",
+                "gerekce": f"Elendi: İlgisiz ünite ({unite} - {konu})",
+            }
+
+        # 3. Aşama: Metin ve Token Seviyesinde Konu Uygunluk Puanlaması
         def _kelimelere_ayir(m: str) -> set:
             if not m:
                 return set()
@@ -469,28 +578,25 @@ class RAGMotoru:
                 return bool(re.search(pat, metin_lower))
             return a_clean in tokens
 
+        konu_meta = f"{unite} {konu} {alt_konu}"
+        full_doc = f"{c_text} {konu_meta}"
         full_tokens = _kelimelere_ayir(full_doc)
         full_doc_lower = full_doc.replace("İ", "i").replace("I", "ı").lower()
         c_text_lower = c_text.replace("İ", "i").replace("I", "ı").lower()
-
-        temel = (temel_konu or "").lower()
-        kavramlar = [k.lower() for k in (alt_kavramlar or [])]
-        tr_snippet = (transkript or "")[:300].lower()
 
         konu_uygunluk_skoru = 0.0
         pozitif_nedenler = []
         negatif_nedenler = []
 
-        # 1. Konu ve Alt Kavram Eşleşmesi (Kelime sınırlarına duyarlı)
-        for k in kavramlar:
+        # Konu ve Alt Kavram Eşleşmesi (Kelime sınırlarına duyarlı)
+        for k in all_concepts:
             if _var_mi(k, full_tokens, full_doc_lower):
                 konu_uygunluk_skoru += 2.0
                 pozitif_nedenler.append(f"Kavram: '{k}'")
 
-        # 2. Odak Alanı Değerlendirmesi
-        if "pil" in temel or any("pil" in k for k in kavramlar) or "oyuncak" in tr_snippet:
+        # Odak Alanı Değerlendirmesi
+        if "pil" in temel_lower or any("pil" in k for k in all_concepts) or "oyuncak" in tr_lower:
             pil_terimleri = ["pil", "fener", "oyuncak", "kumanda", "küçük araç", "taşınabilir", "batarya", "atık pil"]
-            # 'saat' kelimesini sadece elektrik/cihaz bağlamında kabul et ('saat yönünde', 'saatte' elenir)
             if any(_var_mi(s, full_tokens, full_doc_lower) for s in ["duvar saati", "kol saati", "çalar saat"]):
                 pil_terimleri.append("saat")
             elif _var_mi("saat", full_tokens, full_doc_lower) and not any(sw in full_doc_lower for sw in ["saat yönü", "saatte", "saatler"]):
@@ -507,15 +613,15 @@ class RAGMotoru:
             if eslesen_santral and not (_var_mi("pil", full_tokens, c_text_lower) or _var_mi("el feneri", full_tokens, c_text_lower)):
                 konu_uygunluk_skoru -= 5.0
                 negatif_nedenler.append(f"Konu dışı santral/baraj içeriği: {', '.join(eslesen_santral[:3])}")
-        elif "şehir elektriği" in temel or "santral" in temel:
+        elif "şehir elektriği" in temel_lower or "santral" in temel_lower:
             if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["santral", "şehir elektriği", "baraj", "priz", "fırın", "çamaşır makinesi"]):
                 konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Şehir elektriği / santral içeriği")
-        elif "akü" in temel or "taşıt" in temel or "otomobil" in tr_snippet:
+        elif "akü" in temel_lower or "taşıt" in temel_lower or "otomobil" in tr_lower:
             if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["akü", "otomobil", "motor", "taşıt", "araç"]):
                 konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Akü ve motorlu taşıt içeriği")
-        elif "batarya" in temel or "şarj" in temel or "telefon" in tr_snippet:
+        elif "batarya" in temel_lower or "şarj" in temel_lower or "telefon" in tr_lower:
             if any(_var_mi(t, full_tokens, full_doc_lower) for t in ["batarya", "şarj", "telefon", "bilgisayar", "tablet"]):
                 konu_uygunluk_skoru += 3.0
                 pozitif_nedenler.append("Batarya ve şarj edilebilir cihaz içeriği")
@@ -523,10 +629,49 @@ class RAGMotoru:
         if any(_var_mi(w, full_tokens, full_doc_lower) for w in ["elektrik", "enerji", "araç", "gereç"]):
             konu_uygunluk_skoru += 1.0
 
-        gecerli = konu_uygunluk_skoru >= 1.5
-        kaynak_destek_durumu = "tam_destekli" if konu_uygunluk_skoru >= 4.0 else ("kismi_destekli" if gecerli else "destek_yok")
+        # 4. Aşama: Kaynak Rolü ve Bilimsel Destek Düzeyi Belirleme
+        kaynak_rolu = "konu_disi"
+        if konu_uygunluk_skoru >= 1.5:
+            if ("pil" in temel_lower or "oyuncak" in tr_lower or any("pil" in k for k in all_concepts)):
+                # Pil çalışma mekanizması ve cihaz çalıştırma ana kaynağı
+                if "araç gereç" in konu_lower or ("pil" in c_text_lower and any(w in c_text_lower for w in ["çalıştırır", "sağlar", "enerji", "kabloya gerek olmadan"])):
+                    kaynak_rolu = "ana_kaynak"
+                elif "güvenli" in konu_lower or "atık pil" in c_text_lower or "tehlike" in c_text_lower:
+                    kaynak_rolu = "yardimci_kaynak"
+                else:
+                    kaynak_rolu = "ana_kaynak" if konu_uygunluk_skoru >= 6.0 else "yardimci_kaynak"
+            elif ("şehir elektriği" in temel_lower or "santral" in temel_lower):
+                if any(w in c_text_lower for w in ["santral", "şehir elektriği", "priz", "kablo"]):
+                    kaynak_rolu = "ana_kaynak"
+                else:
+                    kaynak_rolu = "yardimci_kaynak"
+            elif ("akü" in temel_lower or "taşıt" in temel_lower):
+                if "akü" in c_text_lower or "taşıt" in c_text_lower:
+                    kaynak_rolu = "ana_kaynak"
+                else:
+                    kaynak_rolu = "yardimci_kaynak"
+            elif ("batarya" in temel_lower or "şarj" in temel_lower):
+                if "batarya" in c_text_lower or "şarj" in c_text_lower:
+                    kaynak_rolu = "ana_kaynak"
+                else:
+                    kaynak_rolu = "yardimci_kaynak"
+            else:
+                kaynak_rolu = "ana_kaynak" if konu_uygunluk_skoru >= 6.0 else "yardimci_kaynak"
+
+        # Farklı sınıf kaynağı izin verilmiş olsa bile ASLA ana kaynak olamaz
+        if is_cross_grade and kaynak_rolu == "ana_kaynak":
+            kaynak_rolu = "yardimci_kaynak"
+
+        gecerli = kaynak_rolu in ["ana_kaynak", "yardimci_kaynak"]
+        if kaynak_rolu == "ana_kaynak" and konu_uygunluk_skoru >= 4.0:
+            kaynak_destek_durumu = "tam_destekli"
+        elif kaynak_rolu in ["ana_kaynak", "yardimci_kaynak"] and konu_uygunluk_skoru >= 1.5:
+            kaynak_destek_durumu = "kismi_destekli"
+        else:
+            kaynak_destek_durumu = "destek_yok"
+
         gerekce = (
-            f"Kabul edildi: {'; '.join(pozitif_nedenler)}"
+            f"Kabul edildi [{kaynak_rolu}]: {'; '.join(pozitif_nedenler)}"
             if gecerli
             else (f"Elendi: {'; '.join(negatif_nedenler) if negatif_nedenler else 'Yetersiz konu alaka puanı'}")
         )
@@ -534,10 +679,14 @@ class RAGMotoru:
         return {
             "gecerli": gecerli,
             "puan": round(konu_uygunluk_skoru, 2),
-            "vektor_skoru": 1.0,
+            "vektor_skoru": vektor_skoru,
+            "vektor_mesafesi": vektor_mesafesi,
+            "arama_yontemi": arama_yontemi,
+            "lexical_skor": lexical_skor,
             "konu_uygunluk_skoru": round(konu_uygunluk_skoru, 2),
+            "kaynak_rolu": kaynak_rolu,
             "kaynak_destek_durumu": kaynak_destek_durumu,
-            "gerekce": gerekce
+            "gerekce": gerekce,
         }
 
     def bolum_bazli_cok_yonlu_arama(
@@ -552,6 +701,7 @@ class RAGMotoru:
         gorsel_aciklamasi: str = "",
         temel_konu: str = "",
         alt_kavramlar: Optional[List[str]] = None,
+        allow_cross_grade: bool = False,
     ) -> Dict[str, Any]:
         """
         KULLANICI TAVSİYESİYLE GELİŞTİRİLEN 3 BOYUTLU VE ÇOK YÖNLÜ RAG MİMARİSİ:
@@ -561,8 +711,10 @@ class RAGMotoru:
         2. Pedagojik Sorgu: Sınıf seviyesine uygun anlatım dili, somut görsel unsurlar ve kazanımlar.
         3. Ölçme-Değerlendirme Sorgusu: İlgili ünitedeki soru tipleri ve etkinlik örnekleri.
 
-        Getirilen her parçayı chunk_alaka_puanla ile konu uygunluk denetiminden geçirir;
-        alakasız parçaları eler ve sadece doğrulanmış destekleyen parçaları senteze ve kaynakçaya iletir.
+        KATI SINIF İZOLASYONU:
+        - sinif="3. Sınıf" için varsayılan olarak yalnızca 3. sınıf parçaları kabul edilir.
+        - allow_cross_grade=True verilmedikçe başka sınıf kaynakları kesinlikle havuza alınmaz.
+        - Ana kaynak (ana_kaynak) ve yardımcı kaynak (yardimci_kaynak) ayrımı yapılır.
         """
         konu_odak = temel_konu or bolum_basligi
         kavramlar_str = ", ".join(alt_kavramlar) if alt_kavramlar else ""
@@ -573,18 +725,39 @@ class RAGMotoru:
         if kavramlar_str:
             bilgi_sorgusu += f" Kavramlar: {kavramlar_str}."
         bilgi_sorgusu += f" {transkript[:200]}"
-        raw_bilgi_docs = self.seviye_filtreli_arama(sorgu=bilgi_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        raw_bilgi_docs = self.seviye_filtreli_arama(
+            sorgu=bilgi_sorgusu,
+            egitim_seviyesi=egitim_seviyesi,
+            sinif=sinif,
+            ders_adi=ders_adi,
+            k=k,
+            allow_cross_grade=allow_cross_grade,
+        )
 
         # 2. Pedagojik Sorgu (Görsel unsurlar ve pedagojik kazanımlar)
         pedagoji_sorgusu = f"{sinif} {ders_adi}. Konu: {konu_odak}."
         if unsurlar_str:
             pedagoji_sorgusu += f" Görsel unsurlar: {unsurlar_str}."
         pedagoji_sorgusu += f" {sinif} düzeyinde somut örnekler ve pedagojik anlatım."
-        raw_pedagoji_docs = self.seviye_filtreli_arama(sorgu=pedagoji_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        raw_pedagoji_docs = self.seviye_filtreli_arama(
+            sorgu=pedagoji_sorgusu,
+            egitim_seviyesi=egitim_seviyesi,
+            sinif=sinif,
+            ders_adi=ders_adi,
+            k=k,
+            allow_cross_grade=allow_cross_grade,
+        )
 
         # 3. Ölçme-Değerlendirme Sorgusu
         olcme_sorgusu = f"{sinif} {ders_adi}. Konu: {konu_odak}. Soru, alıştırma ve etkinlik örnekleri."
-        raw_olcme_docs = self.seviye_filtreli_arama(sorgu=olcme_sorgusu, egitim_seviyesi=egitim_seviyesi, sinif=sinif, ders_adi=ders_adi, k=k)
+        raw_olcme_docs = self.seviye_filtreli_arama(
+            sorgu=olcme_sorgusu,
+            egitim_seviyesi=egitim_seviyesi,
+            sinif=sinif,
+            ders_adi=ders_adi,
+            k=k,
+            allow_cross_grade=allow_cross_grade,
+        )
 
         rag_sorgulari = [bilgi_sorgusu, pedagoji_sorgusu, olcme_sorgusu]
 
@@ -606,11 +779,14 @@ class RAGMotoru:
                 alt_kavramlar=alt_kavramlar,
                 gorsel_unsurlar=gorsel_unsurlar,
                 transkript=transkript,
+                hedef_sinif=sinif,
+                allow_cross_grade=allow_cross_grade,
             )
 
             chunk_ozet = {
                 "chunk_id": c_id,
                 "kaynak": d.metadata.get("source"),
+                "sinif": d.metadata.get("sinif", ""),
                 "sayfa": d.metadata.get("page"),
                 "physical_page": d.metadata.get("physical_page") if d.metadata.get("physical_page") is not None else d.metadata.get("page"),
                 "printed_page": d.metadata.get("printed_page") if d.metadata.get("has_printed_page") else None,
@@ -618,6 +794,12 @@ class RAGMotoru:
                 "konu": d.metadata.get("konu", ""),
                 "referans": d.metadata.get("referans") or f"{d.metadata.get('source')} (Sayfa {d.metadata.get('page')})",
                 "puan": puan_sonucu["puan"],
+                "kaynak_rolu": puan_sonucu["kaynak_rolu"],
+                "vektor_skoru": puan_sonucu["vektor_skoru"],
+                "vektor_mesafesi": puan_sonucu["vektor_mesafesi"],
+                "arama_yontemi": puan_sonucu["arama_yontemi"],
+                "lexical_skor": puan_sonucu["lexical_skor"],
+                "konu_uygunluk_skoru": puan_sonucu["konu_uygunluk_skoru"],
                 "gerekce": puan_sonucu["gerekce"],
                 "icerik": d.page_content.strip()
             }
@@ -666,10 +848,17 @@ class RAGMotoru:
                 "dokumanlar": docs
             }
 
+        # Ana kaynak ve yardımcı kaynak ayrımı
+        ana_kaynaklar = [item["info"] for item in destekleyen_chunklar if item["info"].get("kaynak_rolu") == "ana_kaynak"]
+        yardimci_kaynaklar = [item["info"] for item in destekleyen_chunklar if item["info"].get("kaynak_rolu") == "yardimci_kaynak"]
+
         # En iyi doğrulanmış referans ve destek durumu belirleme
-        if destekleyen_chunklar:
-            en_iyi_referans = destekleyen_chunklar[0]["info"]["referans"]
-            kaynak_destek_durumu = "tam_destekli" if len(destekleyen_chunklar) >= 2 else "kismi_destekli"
+        if ana_kaynaklar:
+            en_iyi_referans = ana_kaynaklar[0]["referans"]
+            kaynak_destek_durumu = "tam_destekli"
+        elif yardimci_kaynaklar:
+            en_iyi_referans = yardimci_kaynaklar[0]["referans"]
+            kaynak_destek_durumu = "kismi_destekli"
         else:
             en_iyi_referans = "Doğrulanmış RAG eşleşmesi bulunamadı"
             kaynak_destek_durumu = "destek_yok"
@@ -690,6 +879,9 @@ class RAGMotoru:
                 "has_printed_page": item["doc"].metadata.get("has_printed_page", False),
                 "referans": item["info"]["referans"],
                 "chunk_id": item["info"]["chunk_id"],
+                "kaynak_rolu": item["info"].get("kaynak_rolu", "yardimci_kaynak"),
+                "arama_yontemi": item["info"].get("arama_yontemi"),
+                "vektor_skoru": item["info"].get("vektor_skoru"),
             }
             for item in destekleyen_chunklar
         ]
@@ -702,6 +894,8 @@ class RAGMotoru:
             "kaynak_destek_durumu": kaynak_destek_durumu,
             "rag_sorgulari": rag_sorgulari,
             "destekleyen_chunklar": [item["info"] for item in destekleyen_chunklar],
+            "ana_kaynaklar": ana_kaynaklar,
+            "yardimci_kaynaklar": yardimci_kaynaklar,
             "elenen_chunklar": elenen_chunklar,
             "tum_kaynaklar": dogrulanmis_tum_kaynaklar
         }
