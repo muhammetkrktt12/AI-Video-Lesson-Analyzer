@@ -147,6 +147,114 @@ class GeminiAnalyzer:
 
         return metin if len(metin) > 15 else ham_metin.strip()
 
+    @classmethod
+    def pedagojik_anlatim_normallestir(cls, metin: str) -> str:
+        """
+        Ders notu anlatımını öğretmen konuşmasından, hitaplardan ve sınıf yönergelerinden
+        arındırır; nesnel, 3. tekil şahıs ve MEB ders kitabı standartlarında expository metne dönüştürür.
+        """
+        if not metin:
+            return ""
+
+        # HTML etiketlerini ve markdown işaretlerini temizle
+        temiz = metin.replace("<br/>", "\n\n").replace("<br />", "\n\n").replace("<br>", "\n\n")
+        temiz = re.sub(r"\*\*([^*]+)\*\*", r"\1", temiz)
+        temiz = re.sub(r"\*([^*]+)\*", r"\1", temiz)
+
+        # Cümle bazlı filtreleme: Öğretmen konuşması, hitap ve sınıf yönergeleri içeren cümleleri ayıkla
+        yasakli_cumle_kaliplari = [
+            r"(?i)\b(bugünkü|bu)\s+dersi?mizde\s+.*?(keşfedeceğiz|öğreneceğiz|inceleyeceğiz|göreceğiz|ele\s+alacağız|bakacağız|konuşacağız)",
+            r"(?i)\b(şimdi|hadi|gelin)\s+.*?(başlayalım|keşfedelim|öğrenelim|inceleyelim|bakalım|geçelim|çözelim)",
+            r"(?i)\b(sınıf\s+)?arkadaşlar(ımız)?la\s+(tartışalım|konuşalım|paylaşalım)",
+            r"(?i)\b(arkadaşlarınızla|arkadaşlarınla)\s+tartış(ınız)?",
+            r"(?i)\b(aşağıdaki|yukarıdaki)\s+(alana|boşluğa|bölüme|noktalı\s+yerlere)\s+(yazalım|çizelim|dolduralım|yazınız|doldurunuz)",
+            r"(?i)\bmerak\s+ettiğimiz\s+soruları\s+.*?yazalım",
+            r"(?i)\bkemerlerinizi\s+bağlayın",
+            r"(?i)\bsevgili\s+(öğrenciler|öğrencilerim|çocuklar|arkadaşlar)",
+            r"(?i)\bmerhaba\s+(arkadaşlar|öğrenciler|çocuklar)",
+            r"(?i)\bhadi\s+(başlayalım|gelin\s+birlikte|bakalım)",
+            r"(?i)\bhep\s+birlikte\s+(öğreneceğiz|keşfedeceğiz|inceleyeceğiz|göreceğiz|bakalım|öğrenelim)",
+            r"(?i)\bbir\s+sonraki\s+dersi?mizde\s+.*?(öğreneceğiz|inceleyeceğiz|keşfedeceğiz|göreceğiz|ele\s+alacağız|işleyeceğiz)",
+            r"(?i)\bhepinize\s+iyi\s+çalışmalar",
+            r"(?i)\bbaşarılar\s+diliyorum",
+            r"(?i)\bşimdi\s+ekrandaki\s+.*?(bakalım|çözelim|inceleyelim)",
+            r"(?i)\bşimdi\s+tahtadaki\s+.*?(bakalım|çözelim|inceleyelim)",
+            r"(?i)\bönce\s+şu\s+örnekle\s+başlayalım",
+            r"(?i)\börnekle\s+başlayalım",
+            r"(?i)\böğretmenimizin\s+de\s+(vurguladığı|anlattığı|belirttiği)\s+gibi",
+            r"(?i)\bbir\s+düşünelim\b",
+            r"(?i)\bneden\s+durdu\s+dersiniz\b",
+            r"(?i)\bşimdi\s+sıradaki\s+.*?(geçelim|bakalım)",
+        ]
+
+        paragraflar = temiz.split("\n\n")
+        duzenlenmis_paragraflar = []
+
+        for p in paragraflar:
+            p_strip = p.strip()
+            if not p_strip:
+                continue
+
+            cumleler = re.split(r"(?<=[.!?])\s+", p_strip)
+            temiz_cumleler = []
+
+            for c in cumleler:
+                c_strip = c.strip()
+                if not c_strip:
+                    continue
+
+                # Yasaklı konuşma/yönerge kalıbı varsa bu cümleyi at
+                if any(re.search(pat, c_strip) for pat in yasakli_cumle_kaliplari):
+                    continue
+
+                cd = c_strip
+
+                # 1. çoğul iyelik ve konuşma kalıplarını nesnel forma dönüştür
+                cd = re.sub(r"(?i)\bgünlük\s+(yaşantımızda|hayatımızda)\b", "günlük yaşamda", cd)
+                cd = re.sub(r"(?i)\bhayatımızı\b", "hayatı", cd)
+                cd = re.sub(r"(?i)\byaşantımızı\b", "yaşantıyı", cd)
+                cd = re.sub(r"(?i)\bişlerimizi\b", "işleri", cd)
+                cd = re.sub(r"(?i)\bevlerimize\b", "evlere", cd)
+                cd = re.sub(r"(?i)\bevimizde\b", "evlerde", cd)
+                cd = re.sub(r"(?i)\bodamızı\b", "odaları", cd)
+                cd = re.sub(r"(?i)\bçevremizde\b", "çevrede", cd)
+                cd = re.sub(r"(?i)\bçevremizi\b", "çevreyi", cd)
+                cd = re.sub(r"(?i)\bokullarımızda\b", "okullarda", cd)
+                cd = re.sub(r"(?i)\bderslerimizi\b", "dersleri", cd)
+                cd = re.sub(r"(?i)\bödevlerimizi\b", "ödevleri", cd)
+                cd = re.sub(r"(?i)\bkullandığımız\b", "kullanılan", cd)
+                cd = re.sub(r"(?i)\bgördüğümüz\b", "görülen", cd)
+                cd = re.sub(r"(?i)\bincelediğimiz\b", "incelenen", cd)
+                cd = re.sub(r"(?i)\böğrendiğimiz\b", "öğrenilen", cd)
+
+                # 1. çoğul şahıs yüklemlerini nesnel 3. şahıs / edilgen yüklemlere dönüştür
+                cd = re.sub(r"(?i)\bkeşfedeceğiz\b", "incelenir", cd)
+                cd = re.sub(r"(?i)\böğreneceğiz\b", "öğrenilir", cd)
+                cd = re.sub(r"(?i)\binceleyeceğiz\b", "incelenir", cd)
+                cd = re.sub(r"(?i)\bele\s+alacağız\b", "ele alınır", cd)
+                cd = re.sub(r"(?i)\bgöreceğiz\b", "görülür", cd)
+                cd = re.sub(r"(?i)\byapacağız\b", "yapılır", cd)
+                cd = re.sub(r"(?i)\bbaşlıyoruz\b", "başlanır", cd)
+                cd = re.sub(r"(?i)\bhazırlanıyoruz\b", "hazırlık yapılır", cd)
+                cd = re.sub(r"(?i)\bkarşılaşırız\b", "karşılaşılır", cd)
+                cd = re.sub(r"(?i)\bgörürüz\b", "görülür", cd)
+                cd = re.sub(r"(?i)\bkullanırız\b", "kullanılır", cd)
+                cd = re.sub(r"(?i)\binceleriz\b", "incelenir", cd)
+                cd = re.sub(r"(?i)\bsağlarız\b", "sağlanır", cd)
+                cd = re.sub(r"(?i)\byaparız\b", "yapılır", cd)
+                cd = re.sub(r"(?i)\böğrendik\b", "öğrenilmiştir", cd)
+                cd = re.sub(r"(?i)\binceledik\b", "incelenmiştir", cd)
+                cd = re.sub(r"(?i)\bgördük\b", "görülmüştür", cd)
+                cd = re.sub(r"(?i)\bkeşfettik\b", "keşfedilmiştir", cd)
+
+                temiz_cumleler.append(cd)
+
+            if temiz_cumleler:
+                duzenlenmis_paragraflar.append(" ".join(temiz_cumleler))
+
+        sonuc = "\n\n".join(duzenlenmis_paragraflar).strip()
+        return sonuc
+
     def _gemini_api_cagir(
         self,
         payload: Dict[str, Any],
@@ -277,9 +385,9 @@ class GeminiAnalyzer:
         egitim_seviyesi: str = "İlkokul"
     ) -> Dict[str, Any]:
         """
-        Öğretmenin anlatımındaki tüm somut örnekleri (ütü, buzdolabı, süpürge vb.) korur,
-        768-boyutlu MEB ders kitabı bağlamıyla harmanlar ve yapay zeka ile yaşa uygun
-        zengin, açıklayıcı, 2 paragraflık pedagojik fasikül metnine dönüştürür.
+        Öğretmenin anlatımındaki bilimsel bilgileri ve somut örnekleri 768-boyutlu MEB ders kitabı
+        bağlamıyla harmanlar; öğretmen konuşması taklidinden ve 1. çoğul şahıstan arındırılmış,
+        tamamen nesnel, 3. tekil şahıs ve ders kitabı üslubunda pedagojik fasikül metnine dönüştürür.
         """
         b_no = bolum.get("bolum_no", 1)
         b_baslik = bolum.get("bolum_basligi", "")
@@ -290,35 +398,45 @@ class GeminiAnalyzer:
         pedagoji_bg = rag_sonuc.get("pedagoji", {}).get("baglam", "")[:700]
         kitap_bg = f"{bilgi_bg}\n{pedagoji_bg}".strip()
 
-        istemi = f"""Sen MEB müfredatına hakim, {sinif} ({egitim_seviyesi}, 8-9 yaş) seviyesinde ders fasikülü yazan uzman bir ilkokul öğretmenisin.
+        istemi = f"""Sen MEB Talim ve Terbiye Kurulu pedagojik standartlarına uygun ilkokul ders kitapları ve fasikülleri yazan uzman bir Eğitim Yayıncısısın.
 
-BÖLÜM: {b_baslik}
+BÖLÜM BAŞLIĞI: {b_baslik}
 
-ÖĞRETMENİN DERS ANLATIMI VE VERDİĞİ TÜM SOMUT ÖRNEKLER:
+VİDEODAKİ DERS ANLATIMI VE BİLİMSEL İÇERİK:
 \"{temiz_transkript}\"
 
-MEB DERS KİTABI BAĞLAMI:
+MEB DERS KİTABI BAĞLAMI VE KAZANIMLARI:
 \"{kitap_bg}\"
 
-GÖREV VE KATI PEDAGOJİK KURALLAR:
-1. Öğretmenin verdiği TÜM SOMUT ÖRNEKLERİ, EŞYALARI VE ANALOJİLERİ metinde eksiksiz koru.
-2. MEB ders kitabındaki kazanım ve tanımlarla birleştirerek 3. sınıf öğrencisinin (8-9 yaş) anlayacağı, akıcı, sıcak, zengin ve açıklayıcı 2 PARAGRAFLIK bir konu anlatımı yaz.
-3. Asla 1-2 cümlelik kuru veya yüzeysel özet yazma! Neden-sonuç ilişkilerini ve örnekleri somutlaştırarak anlat.
-4. Çıktı formatı JSON olmalıdır:
+GÖREV:
+Yukarıdaki ders anlatımındaki bilimsel bilgileri ve MEB ders kitabı bağlamını sentezleyerek bu bölüm için nesnel, açıklayıcı, ders kitabı üslubunda bir "Düzenlenmiş Konu Anlatımı" yaz.
+
+KATI PEDAGOJİK VE ÜSLUP KURALLARI:
+1. ÜSLUP VE ŞAHIS (EN KRİTİK KURAL):
+   - Metin öğretmen konuşması, sınıf içi diyalog veya hitap DEĞİLDİR. Tamamen 3. tekil şahısla ve nesnel ders kitabı diliyle yazılmalıdır ("sağlar", "çalışır", "kullanılır", "dönüştürür", "örnektir", "ifade edilir").
+   - 1. Çoğul şahıs ekleri ve fiilleri ("öğreneceğiz", "inceleyeceğiz", "keşfedeceğiz", "göreceğiz", "yapacağız", "öğrendik") KESİNLİKLE KULLANILMAYACAKTIR.
+   - Sınıf içi yönergeler, konuşma başlatıcılar ve etkileşimli ifadeler ("bugünkü dersimizde", "önce şu örnekle başlayalım", "sınıf arkadaşlarımızla tartışalım", "merak ettiğimiz soruları aşağıdaki alana yazalım", "hadi bakalım", "kemerlerinizi bağlayın", "sevgili öğrenciler") KESİNLİKLE METİNDE YER ALMAYACAKTIR.
+2. PEDAGOJİK DERİNLİK VE BİLİMSEL İÇERİK:
+   - Öğretmenin konuşmasını yalnızca eş anlamlı kelimelerle taklit edip gereksizce uzatma.
+   - Konunun tanımını, çalışma mantığını, neden-sonuç ilişkilerini ve günlük yaşamdan somut örneklerini {sinif} ({egitim_seviyesi}, 8-10 yaş) öğrencisinin bilişsel düzeyine uygun, açık ve net cümlelerle açıkla.
+   - Konuyla ilgisiz MEB bilgileri veya uydurulmuş örnekler ekleme; video transkripti ve MEB kaynaklarıyla tutarlı ol.
+3. DOĞAL UZUNLUK:
+   - Bölümün bilgi yoğunluğuna göre doğal uzunluğunda yaz. Sabit paragraf veya sabit kelime sayısı zorunluluğu yoktur; konuyu eksiksiz, duru ve net açıklayan 1 veya 2 paragraflık bir metin oluştur.
+
+ÇIKTI FORMATI:
+SADECE aşağıdaki JSON nesnesini döndür:
 {{
-  "duzenlenmis_anlatim": "2 paragraflık zengin pedagojik konu anlatımı metni...",
+  "duzenlenmis_anlatim": "Nesnel, 3. tekil şahıs ders kitabı diliyle yazılmış konu anlatımı.",
   "onemli_kavramlar": [
-    {{"kavram": "Kavram 1", "aciklama": "1 cümlelik sade açıklama"}},
-    {{"kavram": "Kavram 2", "aciklama": "1 cümlelik sade açıklama"}}
+    {{"kavram": "Kavram Adı", "aciklama": "1 cümlelik sade ve net tanım"}}
   ]
-}}
-SADECE JSON döndür."""
+}}"""
 
         # 1. Tercih: Yerel Ollama
         veri = self._ollama_tekil_sentez(istemi, timeout=self.ollama_section_timeout)
-        if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 120:
+        if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 60:
             print(f" -> [Bölüm {b_no}] Ollama ile pedagojik harmanlama ve zenginleştirme tamamlandı.")
-            bolum["duzenlenmis_anlatim"] = veri["duzenlenmis_anlatim"]
+            bolum["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(veri["duzenlenmis_anlatim"])
             if "onemli_kavramlar" in veri and veri["onemli_kavramlar"]:
                 bolum["onemli_kavramlar"] = veri["onemli_kavramlar"]
             bolum["kaynak_tipi"] = "ollama"
@@ -327,9 +445,9 @@ SADECE JSON döndür."""
         # 2. Tercih: Google Gemini REST
         if self._api_anahtari_var_mi():
             veri = self._gemini_rest_sentez(istemi, timeout=self.gemini_timeout)
-            if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 120:
+            if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 60:
                 print(f" -> [Bölüm {b_no}] Gemini API ile pedagojik harmanlama ve zenginleştirme tamamlandı.")
-                bolum["duzenlenmis_anlatim"] = veri["duzenlenmis_anlatim"]
+                bolum["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(veri["duzenlenmis_anlatim"])
                 if "onemli_kavramlar" in veri and veri["onemli_kavramlar"]:
                     bolum["onemli_kavramlar"] = veri["onemli_kavramlar"]
                 bolum["kaynak_tipi"] = "gemini"
@@ -337,6 +455,8 @@ SADECE JSON döndür."""
 
         # 3. Güvenlik Ağı: Zengin pedagojik içeriği koru
         print(f" -> [Bölüm {b_no}] Yerel/API sentez yanıt vermedi; zengin pedagojik fasikül metni devrede.")
+        if "duzenlenmis_anlatim" in bolum:
+            bolum["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(bolum["duzenlenmis_anlatim"])
         if "kaynak_tipi" not in bolum:
             bolum["kaynak_tipi"] = "rag_fallback"
         return bolum
@@ -429,13 +549,16 @@ SADECE JSON döndür."""
         print(f" -> 2. Tercih (Yedek): Google Gemini API ({self.model})")
 
         # Sistem istemi hazırla
-        sistem_istemi = f"""Sen Türkiye MEB müfredatına ve pedagojik ilkelere hakim uzman bir Eğitim Teknoloğusun.
+        sistem_istemi = f"""Sen Türkiye MEB müfredatına ve pedagojik ilkelere hakim uzman bir Eğitim Yayıncısısın.
 Ders: {ders_adi}, Seviye: {egitim_seviyesi} ({sinif_duzeyi}), Video Başlığı: {video_basligi}.
 Aşağıdaki referans ders kitabı bağlamını ve video konusunu incele.
 
 KATI PEDAGOJİK VE BİLİŞSEL DÜZEY KURALLARI:
 1. Videoyu TEK PARÇA halinde özetleme. Ekrandaki görsel materyallerin (slayt, görsel, şema) değişimine göre 10 bölüme ayır.
-2. Muhatabın {egitim_seviyesi} ({sinif_duzeyi}) öğrencisidir (8-9 yaş). Dil son derece sade, anlaşılır ve MEB ders kitabı üslubunda olmalıdır.
+2. DÜZENLENMİŞ KONU ANLATIMI KURALI (KESİNLİKLE UYULMALIDIR):
+   - "duzenlenmis_anlatim" alanı öğretmen konuşması, sınıf içi yönerge veya diyalog DEĞİLDİR. Tamamen 3. tekil şahıs ve nesnel MEB ders kitabı üslubuyla yazılmalıdır ("sağlar", "çalışır", "kullanılır", "dönüştürür").
+   - 1. Çoğul şahıs ("öğreneceğiz", "inceleyeceğiz", "keşfedeceğiz", "yapacağız", "öğrendik") ve sınıf içi hitaplar/yönergeler ("arkadaşlarımızla tartışalım", "başlayalım", "aşağıdaki alana yazalım", "sevgili öğrenciler") KESİNLİKLE YER ALMAYACAKTIR.
+   - Konunun tanımını, çalışma mantığını, neden-sonuç ilişkilerini ve günlük yaşam örneklerini {sinif_duzeyi} ({egitim_seviyesi}, 8-10 yaş) öğrencisinin bilişsel düzeyine uygun, duru ve pedagojik bir dille açıkla.
 3. Reklam ve eğitim dışı kısımları ele.
 4. Çıktı kesinlikle şu JSON formatında olmalıdır:
 {{
@@ -443,14 +566,14 @@ KATI PEDAGOJİK VE BİLİŞSEL DÜZEY KURALLARI:
   "unite_basligi": "Ünite Adı ve Konu",
   "egitim_seviyesi": "{egitim_seviyesi}",
   "sinif_duzeyi": "{sinif_duzeyi}",
-  "genel_ozet": "Ders fasikülünün kapsamlı genel özeti.",
+  "genel_ozet": "Ders fasikülünün kapsamlı genel özeti (nesnel 3. şahıs diliyle).",
   "bolumler": [
     {{
       "bolum_no": 1,
       "bolum_basligi": "Bölüm Başlığı",
       "zaman_araligi": {{"baslangic": "00:00", "bitis": "00:30", "kare_zamani": 10.0}},
-      "transkript": "Öğretmenin o andaki anlatımı.",
-      "duzenlenmis_anlatim": "Pedagojik ders kitabı diliyle konu anlatımı.",
+      "transkript": "Öğretmenin o andaki ham konuşması.",
+      "duzenlenmis_anlatim": "Nesnel, 3. tekil şahıs ders kitabı diliyle pedagojik konu anlatımı.",
       "onemli_kavramlar": [
         {{"kavram": "Kavram Adı", "aciklama": "1 cümlelik sade açıklama."}}
       ],
@@ -468,12 +591,15 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
         veri = self._ollama_ile_analiz_et(sistem_istemi)
         if veri:
             veri["uretim_kaynagi"] = "ollama"
+            if "genel_ozet" in veri:
+                veri["genel_ozet"] = self.pedagojik_anlatim_normallestir(veri["genel_ozet"])
             norm_bolumler = []
             for idx, b in enumerate(veri.get("bolumler", []), 1):
                 if isinstance(b, dict):
                     b["kaynak_tipi"] = "ollama"
                     if "bolum_no" not in b:
                         b["bolum_no"] = idx
+                    b["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(b.get("duzenlenmis_anlatim", ""))
                     norm_bolumler.append(b)
                 elif isinstance(b, str):
                     norm_bolumler.append({
@@ -481,7 +607,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "bolum_basligi": b,
                         "zaman_araligi": {"baslangic": f"0{idx-1}:00", "bitis": f"0{idx}:00", "kare_zamani": float(30 * idx)},
                         "transkript": b,
-                        "duzenlenmis_anlatim": b,
+                        "duzenlenmis_anlatim": self.pedagojik_anlatim_normallestir(b),
                         "onemli_kavramlar": [],
                         "kitap_referansi": "MEB Ders Kitabı Referansı",
                         "kaynak_tipi": "ollama"
@@ -495,12 +621,15 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
             veri = self._gemini_ile_analiz_et(sistem_istemi)
             if veri:
                 veri["uretim_kaynagi"] = "gemini"
+                if "genel_ozet" in veri:
+                    veri["genel_ozet"] = self.pedagojik_anlatim_normallestir(veri["genel_ozet"])
                 norm_bolumler = []
                 for idx, b in enumerate(veri.get("bolumler", []), 1):
                     if isinstance(b, dict):
                         b["kaynak_tipi"] = "gemini"
                         if "bolum_no" not in b:
                             b["bolum_no"] = idx
+                        b["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(b.get("duzenlenmis_anlatim", ""))
                         norm_bolumler.append(b)
                     elif isinstance(b, str):
                         norm_bolumler.append({
@@ -508,7 +637,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "bolum_basligi": b,
                             "zaman_araligi": {"baslangic": f"0{idx-1}:00", "bitis": f"0{idx}:00", "kare_zamani": float(30 * idx)},
                             "transkript": b,
-                            "duzenlenmis_anlatim": b,
+                            "duzenlenmis_anlatim": self.pedagojik_anlatim_normallestir(b),
                             "onemli_kavramlar": [],
                             "kitap_referansi": "MEB Ders Kitabı Referansı",
                             "kaynak_tipi": "gemini"
@@ -521,8 +650,12 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
         veri = self._orijinal_materyal_simulasyonu(egitim_seviyesi, sinif_duzeyi, ders_adi, video_basligi, video_yolu=video_yolu)
         kaynak_etiketi = "rag_fallback" if rag_baglami else "static_fallback"
         veri["uretim_kaynagi"] = kaynak_etiketi
+        if "genel_ozet" in veri:
+            veri["genel_ozet"] = self.pedagojik_anlatim_normallestir(veri["genel_ozet"])
         for b in veri.get("bolumler", []):
             b["kaynak_tipi"] = kaynak_etiketi
+            if "duzenlenmis_anlatim" in b:
+                b["duzenlenmis_anlatim"] = self.pedagojik_anlatim_normallestir(b["duzenlenmis_anlatim"])
         return veri
 
     def _orijinal_materyal_simulasyonu(
@@ -575,12 +708,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Çevremizdeki teknolojik aletlerin nasıl çalıştığını ve elektrik enerjisinin hayatımızdaki yerini birlikte inceleyeceğiz."
                         ),
                         "duzenlenmis_anlatim": (
-                            "Çevremize baktığımızda evde, okulda ve sokakta hayatımızı kolaylaştıran sayısız teknolojik araç görürüz. "
-                            "Akşamları odamızı aydınlatan lambalardan yiyeceklerimizi soğutan dolaplara kadar pek çok eşya gün boyu bizimledir. "
-                            "Bu aletlerin hepsi, çalışabilmek için özel bir güce, yani elektrik enerjisine ihtiyaç duyar.<br/><br/>"
-                            "MEB 3. Sınıf Fen Bilimleri müfredatında yer alan 'Yaşamımızı Kolaylaştıran Elektrik' ünitemizde; "
-                            "bu araçların nasıl çalıştığını, elektrik enerjisini hangi yararlı işlere dönüştürdüğünü ve elektrik olmadan "
-                            "yaşantımızın nasıl zorlaşacağını adım adım keşfedeceğiz."
+                            "Günlük yaşamda evde, okulda ve sokakta insanların yaşamını kolaylaştıran birçok teknolojik araç ve gereç kullanılır. "
+                            "Aydınlatma sağlayan lambalardan yiyecekleri soğutan buzdolaplarına kadar bu araçların tamamı çalışabilmek için elektrik enerjisine ihtiyaç duyar.<br/><br/>"
+                            "Elektrikli araçlar elektrik enerjisini ısı, ışık, ses ve hareket gibi farklı enerji türlerine dönüştürerek günlük yaşamı kolaylaştırır. "
+                            "Elektrik enerjisinin bulunmadığı durumlarda günlük işlerin sürdürülmesi zorlaşır."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Elektrikli Araç Gereç", "aciklama": "Çalışmak için elektrik enerjisine ihtiyaç duyan teknolojik aletlerin tümüdür."},
@@ -601,11 +732,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "doğru yola çıkıyoruz! Hadi başlayalım!"
                         ),
                         "duzenlenmis_anlatim": (
-                            "Fen bilimleri dersi, çevremizde her gün karşılaştığımız nesnelerin ardındaki bilimsel sırları keşfetme yolculuğudur. "
-                            "Bir düğmeye bastığımızda lambanın nasıl yandığını veya fişe taktığımız bir cihazın nasıl ısındığını merak etmek, "
-                            "iyi bir bilim insanı olmanın ilk adımıdır.<br/><br/>"
-                            "Bu bölümde elektrik enerjisinin görünmez gücünü; makinelerin dişlilerini nasıl döndürdüğünü, ses ve ışık dalgalarını "
-                            "nasıl yaydığını eğlenceli ve somut örneklerle öğrenmeye hazırlanıyoruz."
+                            "Çevrede kullanılan teknolojik araçların çalışma prensiplerini anlamak fen bilimlerinin temel amaçlarındandır. "
+                            "Bir anahtara basıldığında lambanın ışık vermesi veya prize takılan bir cihazın ısınması, elektrik enerjisinin varlığıyla gerçekleşir.<br/><br/>"
+                            "Elektrik enerjisi; makinelerin motorlarını döndürerek hareket enerjisi, hoparlörler üzerinden ses enerjisi ve ampuller aracılığıyla ışık enerjisi oluşturur."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Bilimsel Merak", "aciklama": "Çevremizdeki teknolojik nesnelerin nasıl çalıştığını sorgulama isteğidir."},
@@ -627,12 +756,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Klima sıcak havalarda serinletir, soğukta ısıtır. Elektrikli süpürge ise evdeki toz ve kirleri temizler. Hepsinin yaptığı iş farklı olsa da en temel ortak özellikleri elektrik enerjisiyle çalışmalarıdır!"
                         ),
                         "duzenlenmis_anlatim": (
-                            "Ekranda incelediğimiz 6 farklı ev aletini düşünelim: Kırışan giysilerimizi düzelten ütü, süt ve peynirlerimizi taze tutan buzdolabı, "
-                            "kirli çamaşırlarımızı tertemiz yapan çamaşır makinesi, ders çalışıp araştırmalar yaptığımız bilgisayar, odamızı istediğimiz sıcaklığa getiren klima "
-                            "ve yerdeki tozları toplayan elektrikli süpürge... Bu araçların her biri bambaşka görevler üstlenmiştir ve farklı odalarda kullanılır.<br/><br/>"
-                            "Ancak öğretmenimizin de vurguladığı gibi bu aletlerin en büyük ve sihirli ortak özelliği, hiçbirinin elektrik enerjisi olmadan çalışamamasıdır! "
-                            "Elektrik kesildiğinde ütü ısınmaz, süpürge toz çekmez, buzdolabı soğutamaz. Bu cihazlar elektrik enerjisini ısıya, harekete, sese ve ışığa dönüştürerek "
-                            "insan kas gücünün yerini alır ve ev işlerimizi dakikalar içinde tamamlamamızı sağlar."
+                            "Ekranda gösterilen ütü, buzdolabı, çamaşır makinesi, bilgisayar, klima ve elektrikli süpürge gibi araçların her biri farklı amaçlar için üretilmiştir. "
+                            "Ütü giysileri düzeltir, buzdolabı besinleri korur, çamaşır makinesi giysileri yıkar, bilgisayar bilgiye ulaşmayı sağlar, klima ortam sıcaklığını dengeler ve süpürge temizlik yapar.<br/><br/>"
+                            "Bu araçların en temel ortak özelliği, elektrik enerjisi olmadan çalışamamasıdır. "
+                            "Elektrikli araçlar insan gücünün yerini alarak işlerin daha kısa sürede ve zahmetsizce tamamlanmasını sağlar."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Ortak Özellik", "aciklama": "Farklı amaçlarla üretilmiş cihazların tümünün çalışmak için elektrik enerjisine ihtiyaç duymasıdır."},
@@ -653,10 +780,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "yemek yapmak için fırın gibi birçok elektrikli araç gereç kullanırız. Elektriği ulaşım, ısıtma, aydınlatma, haberleşme, temizlik, sağlık, eğitim ve ev işlerinde kesintisiz olarak kullanmaktayız."
                         ),
                         "duzenlenmis_anlatim": (
-                            "Prizlerimize gelen elektrik enerjisi evimizde kendiliğinden oluşmaz; barajlardaki hidroelektrik santrallerde, rüzgâr güllerinde veya termik santrallerde dev makinelerle üretilir. "
-                            "Üretilen bu güçlü enerji, gökyüzündeki kalın iletim telleri ve yer altı kablolarıyla kilometrelerce yol kat ederek evlerimize, okullarımıza ve hastanelere ulaşır.<br/><br/>"
-                            "Banyodan çıktığımızda saçımızı kurutan fön makinesi de mutfakta sıcacık ekmekler pişiren fırın da aynı güçlü enerjiden beslenir. "
-                            "Sağlıktan eğitime, ulaşımdan temizliğe kadar hayatımızın her anında elektrik enerjisi sayesinde işlerimizi hızlı, güvenli ve zahmetsizce bitiririz."
+                            "Elektrik enerjisi; barajlardaki hidroelektrik santrallerde, rüzgâr santrallerinde veya termik santrallerde üretilir. "
+                            "Üretilen enerji yüksek gerilim hatları ve yer altı kablolarıyla yerleşim yerlerine ulaştırılır.<br/><br/>"
+                            "Saç kurutma makinelerinden fırınlara kadar birçok ev aleti bu kaynaktan beslenir. "
+                            "Elektrik enerjisi sağlık, eğitim, ulaşım, aydınlatma, ısıtma ve temizlik gibi pek çok alanda insan yaşamının vazgeçilmez bir parçasıdır."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Elektrik Santrali", "aciklama": "Elektrik enerjisinin büyük ölçekte üretilerek şehirlere dağıtıldığı tesislerdir."},
@@ -677,10 +804,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Ampul aydınlatma yapar, süpürge temizlik yapar. Tost makinesi ise elektrik enerjisini ısıya çevirerek lezzetli tostlar ve yiyecekler hazırlamamızı sağlar. Doğru yanıtımız C seçeneğidir!"
                         ),
                         "duzenlenmis_anlatim": (
-                            "Öğrendiğimiz bilgileri pekiştirmek için ekrandaki soruyu adım adım inceleyelim: Seçeneklerdeki ampul karanlığı aydınlatmak için, elektrikli süpürge ise yerdeki kırıntıları çekip temizlik yapmak için üretilmiştir. "
-                            "Tost makinesi ise elektrik enerjisini güçlü bir ısıya dönüştürerek ekmekleri kızartır ve nefis yiyecekler hazırlar.<br/><br/>"
-                            "Bir elektrikli aletin kullanım amacını belirlerken onun hangi ihtiyacımızı karşıladığına bakarız. Besinlerimizi ısıtıp pişiren tost makinesi mutfakta yemek hazırlama kategorisine girer. "
-                            "Bu nedenle doğru yanıt C şıkkıdır."
+                            "Elektrikli araçlar kullanım amaçlarına göre sınıflandırılır. Seçeneklerdeki ampul aydınlatma, elektrikli süpürge ise temizlik amacıyla kullanılır. "
+                            "Tost makinesi ise elektrik enerjisini ısıya dönüştürerek yiyecek hazırlama işlevini yerine getirir.<br/><br/>"
+                            "Besinleri ısıtarak pişiren veya kızartan araçlar mutfakta yemek hazırlama grubuna girer. "
+                            "Bu nedenle yemek pişirme amacıyla kullanılan araç tost makinesidir (Doğru Yanıt: C seçeneği)."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Pişirme Amaçlı Araç", "aciklama": "Elektrik enerjisini ısıya dönüştürerek yiyecek hazırlayan cihazlardır (tost makinesi, fırın)."},
@@ -701,10 +828,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "İkincisi aydınlatma amaçlı araçlar: Evimizi aydınlatan ampul, karanlık yollarda yolumuzu gösteren sokak lambası ve taşınabilir el feneri."
                         ),
                         "duzenlenmis_anlatim": (
-                            "Elektrikli araçları kullanım amaçlarına göre sınıflandırmak konuları kavramamızı çok kolaylaştırır. İlk grubumuz 'Isınma ve Soğutma' amaçlı araçlardır: "
-                            "Soğuk kış günlerinde odamızı ısıtan elektrikli sobalar, radyatörler ve yazın serinletip kışın ısıtan klimalar elektrik enerjisini doğrudan ısı enerjisine dönüştürür.<br/><br/>"
-                            "İkinci grubumuz ise 'Aydınlatma' araçlarıdır: Masamızdaki çalışma lambası, tavanımızdaki ampul, geceleri sokakları güvenli kılan sokak lambaları ve elektrikler kesildiğinde elimize aldığımız fenerler "
-                            "elektrik enerjisini ışığa çevirerek çevremizi net görmemizi sağlar."
+                            "Elektrikli araçların kullanım amaçlarına göre sınıflandırılmasında iki önemli grup ısınma ve aydınlatmadır. "
+                            "Elektrikli sobalar, radyatörler ve klimalar elektrik enerjisini doğrudan ısı enerjisine dönüştürerek ortam sıcaklığını ayarlar.<br/><br/>"
+                            "Aydınlatma grubunda yer alan masa lambaları, avizeler, sokak lambaları ve el fenerleri ise elektrik enerjisini ışığa çevirerek görmeyi mümkün kılar."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Isınma Amaçlı Elektrikli Araç", "aciklama": "Elektrik enerjisini ısı enerjisine çevirerek ortam sıcaklığını artıran cihazlardır."},
@@ -726,10 +852,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Ancak 'Evimizi ısıtmak için fırın kullanırız' ifadesi kesinlikle yanlıştır; fırın yemek pişirmek içindir, evi ısıtmak için elektrikli soba kullanılır. Söylenemez olan A seçeneğidir!"
                         ),
                         "duzenlenmis_anlatim": (
-                            "Ders kitabımızdaki günlük hayat canlandırmasında çocuğun eve geldiğinde karşılaştığı durum ele alınmıştır: Annesi mutfakta lezzetli börekler pişirmek için fırını çalıştırmış, "
-                            "yere düşüp kırılan bardağın tehlikeli cam kırıklarını ise kimsenin ayağına batmasın diye elektrikli süpürgeyle güvenle çekmiştir.<br/><br/>"
-                            "Burada dikkat etmemiz gereken en önemli kural her aracın sadece kendi üretim amacına uygun kullanılmasıdır. Fırın yalnızca yemek pişirmek içindir; evimizi ısıtmak için asla fırın kapağı açık bırakılmaz, "
-                            "bunun için elektrikli soba veya klima kullanılır. Ayrıca kırık cam gibi kesici maddeleri elle toplamak yerine süpürgeyle çekmek ev kazalarını önleyen harika bir güvenlik kuralıdır."
+                            "Elektrikli araçların güvenli ve doğru kullanımı, her aletin üretim amacına uygun çalıştırılmasına bağlıdır. "
+                            "Fırın yalnızca yemek pişirme amacıyla kullanılan bir cihazdır; ev veya odayı ısıtmak amacıyla fırın kullanılması ciddi güvenlik riskleri oluşturur.<br/><br/>"
+                            "Kırılan bardak parçaları gibi kesici ve sivri atıkların elektrikli süpürge yardımıyla toplanması ise ev kazalarını önleyen doğru bir güvenlik uygulamasıdır."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Doğru Kullanım Amacı", "aciklama": "Her elektrikli aletin yalnızca üretildiği amaca uygun şekilde kullanılması kuralıdır."},
@@ -750,10 +875,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "elektrikli süpürge ise halı ve zeminleri temizler. Sağ tarafta ise uzaktaki sevdiklerimizle haberleşmemizi ve dünyayı öğrenmemizi sağlayan akıllı telefon, tablet, televizyon ve radyo yer alır."
                         ),
                         "duzenlenmis_anlatim": (
-                            "Evimizin hijyenini sağlayan 'Temizlik' araçları, en yorucu işleri üzerimizden alır: Çamaşır makinesi kıyafetlerimizi yıpratmadan yıkar, bulaşık makinesi tabak ve bardaklarımızı pırıl pırıl yapar, "
-                            "elektrikli süpürge ise halıların derinliklerindeki görünmeyen tozları içine çeker. Böylece hem zaman kazanırız hem de mikroplardan korunuruz.<br/><br/>"
-                            "'Haberleşme ve İletişim' araçları ise dünyayı evimize getirir: Akıllı telefonlarla uzaktaki büyükanne ve büyükbabamızın sesini duyar, televizyon ve radyodan hava durumu ve haberleri öğrenir, "
-                            "tablet ve bilgisayarlarla ders videoları izleyip ödevlerimizi yaparız."
+                            "Temizlik amacıyla kullanılan elektrikli araçlar hijyenik ortamların korunmasını sağlar. "
+                            "Çamaşır ve bulaşık makineleri ile elektrikli süpürgeler temizlik işlerini hızlandırarak zamandan tasarruf sağlar.<br/><br/>"
+                            "Haberleşme alanındaki akıllı telefonlar, televizyonlar, radyolar, tabletler ve bilgisayarlar ise ses ve görüntü ileterek uzaktaki insanlarla iletişim kurmayı ve bilgiye erişimi sağlar."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Temizlik Amaçlı Araç", "aciklama": "Evdeki kir ve mikropları temizleyerek sağlıklı yaşam alanı oluşturan makinelerdir."},
@@ -774,10 +898,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Altta ise okullarımızdaki eğitim araçları: Akıllı tahta, projeksiyon cihazı, yazıcı ve fotokopi makineleri derslerimizi daha verimli işlememizi sağlar."
                         ),
                         "duzenlenmis_anlatim": (
-                            "Teknolojinin gelişmesiyle elektrik enerjisi 'Ulaşım' sektöründe devrim yaratmıştır: Şehirler arasında saatte yüzlerce kilometre hızla yol alan hızlı trenler, yer altından sessizce giden metrolar "
-                            "ve egzoz dumanı çıkarmayarak havayı tertemiz tutan yerli elektrikli otomobilimiz TOGG geleceğin çevre dostu taşıtlarıdır.<br/><br/>"
-                            "Okullarımızda ise 'Eğitim' araçları derslerimizi renklendirir: Öğretmenimizin tebeşir tozu olmadan ders anlattığı akıllı tahtalar, dev ekrana yansıtan projeksiyon cihazları ve sınav kağıtlarımızı çoğaltan fotokopi makineleri "
-                            "bilginin kolayca zihnimize yerleşmesini sağlar."
+                            "Elektrik enerjisi ulaşım ve eğitim alanlarında yaygın biçimde kullanılır. "
+                            "Hızlı trenler, metro hatları ve elektrikli otomobiller çevreye egzoz gazı bırakmadan çalışan çevre dostu modern taşıtlardır.<br/><br/>"
+                            "Eğitim alanında ise akıllı tahtalar, projeksiyon cihazları ve fotokopi makineleri ders materyallerinin sunulmasını, görselleştirilmesini ve çoğaltılmasını kolaylaştırır."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Ulaşım Amaçlı Araç", "aciklama": "Elektrik motoruyla yolcu ve yük taşıyan çevre dostu taşıtlardır (hızlı tren, elektrikli otomobil TOGG)."},
@@ -798,10 +921,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                             "Bir sonraki dersimizde elektrik kaynaklarını daha detaylı inceleyeceğiz. Hepinize iyi çalışmalar!"
                         ),
                         "duzenlenmis_anlatim": (
-                            "Fasikülümüzün bu dersinde çevremizi saran elektrikli aletlerin hayatımızın vazgeçilmez bir parçası olduğunu öğrendik. Elektrikli araçları 5 ana grupta topladık: Isınma/Soğutma, Aydınlatma, Temizlik, Haberleşme, Ulaşım ve Eğitim. "
-                            "Her aletin farklı bir işlevi olsa da hepsi elektrik enerjisiyle çalışarak işlerimizi hızlandırır.<br/><br/>"
-                            "Unutmamamız gereken en önemli vatandaşlık görevi ise elektriği tasarruflu kullanmaktır: Gereksiz yanan lambaları kapatmalı, açık kalan aletleri fişten çekmeli ve doğal kaynaklarımızı korumalıyız. "
-                            "Bir sonraki dersimizde bu aletleri çalıştıran şehir elektriği, pil, batarya ve akü gibi elektrik kaynaklarını keşfedeceğiz!"
+                            "Elektrikli araç ve gereçler aydınlatma, ısınma, temizlik, haberleşme, ulaşım ve eğitim olmak üzere pek çok farklı alanda insan yaşamını kolaylaştırır. "
+                            "Her araç farklı bir işlevi yerine getirse de tamamı elektrik enerjisine ihtiyaç duyar.<br/><br/>"
+                            "Elektrik enerjisinin verimli ve tasarruflu kullanılması, gereksiz tüketimin önlenmesi ve doğal kaynakların korunması temel bir sorumluluktur."
                         ),
                         "onemli_kavramlar": [
                             {"kavram": "Ünite Özeti", "aciklama": "Elektrikli araç gereçlerin sınıflandırılması ve insan yaşamına katkılarının bütünsel tekrarıdır."},
@@ -822,7 +944,7 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
             "egitim_seviyesi": egitim_seviyesi,
             "sinif_duzeyi": sinif_duzeyi,
             "genel_ozet": (
-                "Bu ders fasikülünde günlük hayatımızda kullandığımız elektrikli araçların çalışması için "
+                "Bu ders fasikülünde günlük yaşamda kullanılan elektrikli araçların çalışması için "
                 "gereken 4 temel elektrik kaynağı (Şehir Elektriği, Pil, Batarya ve Akü) görsel materyaller ve "
                 "MEB 3. Sınıf Fen Bilimleri ders kitabı kazanımları doğrultusunda kapsamlı şekilde incelenmiştir. "
                 "Yüksek enerji gerektiren sabit ev aletlerinin şehir elektriğiyle, düşük güçlü taşınabilir araçların pille, "
@@ -844,10 +966,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "Şimdi ekrandaki başlığımıza bakalım: Elektrik Kaynakları!"
                     ),
                     "duzenlenmis_anlatim": (
-                        "Günlük yaşantımızda evde, okulda ve sokakta kullandığımız birçok alet elektrik enerjisiyle çalışır. "
-                        "Elektrikli aletlerin çalışabilmesi için mutlaka bir enerji kaynağına ihtiyaç vardır.<br/><br/>"
-                        "MEB 3. Sınıf Fen Bilimleri müfredatında elektrik kaynakları güçlerine ve kullanım alanlarına göre 4 ana grupta ele alınır: "
-                        "Şehir elektriği, pil, batarya ve akü. Bu bölümde her kaynağın hangi tür cihazlara güç verdiğini keşfedeceğiz."
+                        "Günlük yaşamda kullanılan birçok araç ve gereç, çalışabilmek için elektrik enerjisine ihtiyaç duyar. "
+                        "Elektrik enerjisi; araçların ışık vermesini, hareket etmesini, ısı üretmesini veya çeşitli görevleri yerine getirmesini sağlar.<br/><br/>"
+                        "Elektrikli araçlar ihtiyaç duydukları enerjiyi şehir elektriği, pil, batarya ve akü gibi farklı kaynaklardan elde edebilir. "
+                        "Örneğin el feneri pille, televizyon şehir elektriğiyle, cep telefonu ise şarj edilebilir bataryayla çalışır."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Elektrik Kaynağı", "aciklama": "Elektrikli araçların çalışması için gerekli elektrik enerjisini sağlayan kaynaklardır."},
@@ -869,11 +991,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "içine taktığımız pilin sağladığı elektrik enerjisine ihtiyacı var."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Taşınabilir oyuncaklar ve aletler, içlerindeki elektrik enerjisi bittiğinde çalışamaz. "
-                        "Videodaki uzaktan kumandalı araba örneğinde olduğu gibi, arabanın tekerleklerinin dönmesi "
-                        "ve kumandadan gelen komutları alması pilden gelen elektrik enerjisi sayesindedir.<br/><br/>"
-                        "İçindeki pil bittiğinde veya tükendiğinde araç durur. Bu durum bize tüm elektrikli aletlerin sürekli ve uygun bir "
-                        "enerji kaynağına muhtaç olduğunu somut şekilde gösterir."
+                        "Taşınabilir elektrikli araçlar ve oyuncaklar, enerjilerini depolanmış kaynaklardan alır. "
+                        "Uzaktan kumandalı oyuncak arabanın motorunun çalışması ve tekerleklerinin dönmesi pilin sağladığı elektrik enerjisiyle gerçekleşir.<br/><br/>"
+                        "Pil tükendiğinde elektrik akımı kesilir ve araç durur. "
+                        "Bu durum, elektrikli araçların görevlerini yapabilmeleri için kesintisiz bir enerji kaynağına gereksinim duyduğunu gösterir."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Enerji İhtiyacı", "aciklama": "Araçların hareket etmesi veya çalışması için gereken enerjidir."},
@@ -895,10 +1016,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "ilçelere, evlerimize kadar iletilir. Evimizdeki ütü, televizyon, buzdolabı ve çamaşır makinesi şehir elektriğiyle çalışır."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Şehir elektriği, barajlardaki hidroelektrik santrallerde, rüzgâr santrallerinde veya termik santrallerde dev makinelerle yüksek güçte üretilir. "
-                        "İletim telleri ve trafolar üzerinden evlerimize kadar duvar prizleri aracılığıyla ulaştırılır.<br/><br/>"
-                        "Yüksek enerji gerektiren büyük ev aletleri (çamaşır makinesi, buzdolabı, fırın, ütü, televizyon) mutlaka duvar prizlerine takılarak "
-                        "şehir elektriğiyle çalıştırılır. Şehir elektriği çok güçlü olduğundan prizlere yabancı cisim sokulmamalı ve güvenlik kurallarına tam uyulmalıdır."
+                        "Şehir elektriği; hidroelektrik santraller, termik santraller, rüzgâr santralleri ve güneş enerji santrallerinde yüksek güçte üretilir. "
+                        "İletim hatları, trafolar ve yerleşim yerlerindeki şebeke kabloları aracılığıyla binalara ve duvar prizlerine iletilir.<br/><br/>"
+                        "Buzdolabı, çamaşır makinesi, fırın, televizyon ve ütü gibi yüksek enerji gerektiren sabit ev aletleri şehir elektriği ile çalışır. "
+                        "Şehir elektriği yüksek gerilime sahip olduğu için prizlere yabancı cisim sokulmamalı ve güvenlik kurallarına titizlikle uyulmalıdır."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Şehir Elektriği", "aciklama": "Santrallerde üretilip kablolarla ev, okul ve fabrikalara iletilen yüksek enerjili elektriktir."},
@@ -920,10 +1041,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "Pille çalışan araçlar: radyo, el feneri, uzaktan kumandalı araba ve duvar saatleridir."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Pil, az miktarda elektrik enerjisi harcayan küçük ve taşınabilir aletleri çalıştırmak için kullanılır. "
-                        "Kumanda pili, kalem pil ve saat pili gibi farklı boyutlarda piller vardır. Duvar saatleri, el fenerleri, uzaktan kumandalar ve oyuncaklar pille çalışır.<br/><br/>"
-                        "Piller bittiğinde içlerindeki kimyasallar toprağa ve suya karışırsa canlılara büyük zarar verir. Bu yüzden tükenen piller asla çöpe veya doğaya atılmamalı, "
-                        "okullarımızdaki ve marketlerdeki özel 'Atık Pil Kutusu'na bırakılmalıdır."
+                        "Pil, az miktarda elektrik enerjisi tüketen küçük ve taşınabilir araçların çalıştırılmasında kullanılan bir elektrik kaynağıdır. "
+                        "Kalem pil, yassı pil ve saat pili gibi farklı boyut ve güçlerde üretilir. Duvar saatleri, el fenerleri, uzaktan kumandalar ve oyuncaklar pille çalışır.<br/><br/>"
+                        "Tükenen pillerin içeriğindeki kimyasal maddelerin çevreye zarar vermemesi için çöpe veya doğaya atılmaması gerekir. "
+                        "Kullanım ömrü biten piller atık pil toplama kutularına bırakılmalıdır."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Pil", "aciklama": "Az miktarda elektrik üreten, kolay taşınabilen küçük enerji kaynağıdır."},
@@ -945,10 +1066,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "fişini prize taktığımız için şehir elektriğiyle çalışır. Yani sadece 1 tanesi! Doğru cevabımız A seçeneğidir."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Tahtada verilen pekiştirme sorusunda el feneri, cep telefonu ve televizyon enerji kaynakları açısından incelenmiştir. "
-                        "El feneri taşınabilir küçük pil ile çalışır. Cep telefonu şarj edilebilir batarya ile çalışır.<br/><br/>"
-                        "Televizyon ise doğrudan elektrik prizine takılarak şehir elektriği kullanır. "
-                        "Dolayısıyla görsellerden yalnızca 1 tanesi şehir elektriğiyle çalışmaktadır (Doğru Yanıt: A seçeneği)."
+                        "Elektrikli araçların enerji kaynakları belirlenirken çalışma gereksinimleri dikkate alınır. "
+                        "El feneri taşınabilir küçük pil ile çalışırken, cep telefonu şarj edilebilir batarya kullanır.<br/><br/>"
+                        "Televizyon ise yüksek elektrik gücü gerektirdiğinden doğrudan şehir elektriğine bağlı prizden enerji alır. "
+                        "Bu nedenle incelenen araçlar arasında yalnızca televizyon şehir elektriğiyle çalışır (Doğru Yanıt: A seçeneği)."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Priz Bağlantısı", "aciklama": "Şehir elektriğinin ev içi aletlere güvenli aktarılmasını sağlayan bağlantı yuvasıdır."},
@@ -970,9 +1091,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "5 uçak ve 6 otomobil aküyle çalışır. 7 duvar saati pille çalışır. O halde Can 1, 4 ve 7 numaralı kartları işaretlemelidir!"
                     ),
                     "duzenlenmis_anlatim": (
-                        "Can'ın pille çalışan araçları bulma sorusunda; el feneri (1), televizyon kumandası (4) ve duvar saati (7) pille çalışır. "
-                        "Cep telefonu bataryayla, ütü şehir elektriğiyle, uçak ve otomobil ise aküyle çalışır.<br/><br/>"
-                        "Bu yüzden Can 1, 4 ve 7 numaralı kartları işaretlemelidir (Doğru Yanıt: C seçeneği)."
+                        "Pille çalışan araçlar, az miktarda elektrik enerjisiyle uzun süre çalışabilen taşınabilir cihazlardır. "
+                        "El feneri, televizyon kumandası ve duvar saati elektrik kaynağı olarak pil kullanır.<br/><br/>"
+                        "Buna karşılık cep telefonu şarj edilebilir bataryayla, ütü şehir elektriğiyle, otomobil ve uçak gibi motorlu taşıtlar ise aküyle çalışır. "
+                        "Bu doğrultuda pille çalışan araçlar el feneri, kumanda ve duvar saatidir (Doğru Yanıt: C seçeneği)."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Taşınabilir Cihazlar", "aciklama": "Priz olmadan kolayca yanımızda taşıyabildiğimiz araçlardır."},
@@ -994,9 +1116,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "telsizler, tabletler ve dijital kameralar bataryayla çalışır."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Batarya; birden fazla pilin bir araya gelmesiyle oluşan güçlü bir elektrik kaynağıdır. "
-                        "Bataryanın pilden en büyük farkı, enerjisi bittiğinde çöpe atılmayıp şarj aletiyle prize takılarak tekrar doldurulabilmesidir.<br/><br/>"
-                        "Cep telefonları, tabletler, dizüstü bilgisayarlar ve ışıldaklar batarya ile çalışır. Böylece dışarıda priz yokken bile cihazlarımızı saatlerce kullanabiliriz."
+                        "Batarya; birden fazla pil hücresinin bir araya getirilmesiyle oluşturulan güçlü bir elektrik kaynağıdır. "
+                        "Bataryanın en önemli özelliği, enerjisi tükendiğinde priz bağlantısı üzerinden şarj edilerek tekrar kullanılabilmesidir.<br/><br/>"
+                        "Dizüstü bilgisayarlar, akıllı telefonlar, tabletler ve telsizler batarya ile çalışarak priz bağlantısı olmadan taşınabilir kullanım imkânı sunar."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Batarya", "aciklama": "Şarj edilebilen ve pilden daha uzun süre elektrik sağlayan kaynaktır."},
@@ -1018,10 +1140,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "otobüs, kamyon, uçak ve gemilerde motorun ilk çalışması ve elektrik donanımı için akü kullanılır."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Akü; otomobil, otobüs, kamyon, uçak ve gemi gibi motorlu ulaşım araçlarında kullanılan büyük ve güçlü bir elektrik kaynağıdır. "
+                        "Akü (akümülatör); otomobil, otobüs, kamyon, uçak ve gemi gibi motorlu ulaşım araçlarında kullanılan büyük ve güçlü bir elektrik kaynağıdır. "
                         "Taşıtların motorunu ilk çalıştırma anında harekete geçirir.<br/><br/>"
-                        "Ayrıca arabanın farlarının, radyosunun, klimasının ve sileceklerinin çalışması için elektrik sağlar. "
-                        "Araç hareket ettikçe motorun gücüyle akü kendi kendini otomatik olarak doldurur."
+                        "Ayrıca aracın farları, radyosu, kliması ve silecekleri gibi elektrikli donanımları için enerji sağlar. "
+                        "Araç hareket ettikçe motorun çalışma gücüyle akü otomatik olarak şarj edilir."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Akü (Akümülatör)", "aciklama": "Arabaların ve otobüslerin motorunu çalıştıran güçlü elektrik kaynağıdır."},
@@ -1044,10 +1166,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "Harika! Böylece dört kaynağımızın da nerelerde kullanıldığını somutlaştırmış olduk."
                     ),
                     "duzenlenmis_anlatim": (
-                        "Ders boyunca ele alınan 4 temel elektrik kaynağı (şehir elektriği, pil, batarya, akü) günlük hayattaki "
-                        "kullanım amaçlarına göre başarıyla eşleştirilmiştir: Yüksek güç tüketen sabit ev eşyaları şehir elektriğine, "
-                        "küçük taşınabilir aletler pillere bağlanır.<br/><br/>"
-                        "Şarj edilebilir akıllı cihazlar bataryaya ve büyük motorlu taşıtlar aküye bağlanır. Böylece cihazın ihtiyacına en uygun enerji kaynağı seçilmiş olur."
+                        "Dört temel elektrik kaynağı (şehir elektriği, pil, batarya, akü) araçların kullanım amaçlarına ve güç ihtiyaçlarına göre belirlenir. "
+                        "Yüksek güç tüketen sabit ev aletleri şehir elektriğine, küçük taşınabilir araçlar pillere bağlanır.<br/><br/>"
+                        "Şarj edilebilir akıllı cihazlar bataryadan, motorlu ulaşım taşıtları ise aküden elektrik sağlar. "
+                        "Böylece her cihaz ihtiyacına en uygun enerji kaynağı ile güvenli şekilde çalışır."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Genel Eşleştirme", "aciklama": "Cihazın büyüklüğü ve taşınabilirliğine göre en uygun elektrik kaynağını seçme mantığıdır."},
@@ -1069,10 +1191,10 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
                         "kurallarını inceleyeceğiz. Hepinize iyi çalışmalar ve başarılar diliyorum!"
                     ),
                     "duzenlenmis_anlatim": (
-                        "Dersin kapanış bölümünde öğrenilen tüm kazanımlar özetlenmiştir. Öğrenciler elektrikli araçların farklı "
-                        "kaynaklardan beslendiğini, pillerin atık kutularına atılması gerektiğini ve yüksek enerjili şehir elektriğiyle "
-                        "çalışan cihazlara dikkatle yaklaşılması gerektiğini kavramıştır.<br/><br/>"
-                        "Bir sonraki dersimizde elektriğin güvenli kullanımı ve priz kurallarını derinlemesine inceleyeceğiz."
+                        "Elektrik kaynakları; şehir elektriği, pil, batarya ve akü olmak üzere dört temel grupta toplanır. "
+                        "Elektrikli aletlerin farklı kaynaklardan beslendiği, yüksek enerjili şehir elektriğiyle çalışan cihazlara dikkatle yaklaşılması gerektiği "
+                        "ve atık pillerin geri dönüşüm kutularına bırakılmasının önemi temel kazanımlar arasındadır.<br/><br/>"
+                        "Elektrik enerjisinin güvenli, dikkatli ve tasarruflu kullanılması çevre ve insan sağlığının korunması açısından esastır."
                     ),
                     "onemli_kavramlar": [
                         {"kavram": "Kazanım Özeti", "aciklama": "Elektrik kaynaklarının (şehir elektriği, pil, batarya, akü) temel özelliklerinin kavranmasıdır."},

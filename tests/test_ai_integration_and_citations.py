@@ -422,7 +422,7 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         self.assertIn("think", sent_payload_q)
         self.assertFalse(sent_payload_q["think"])
         self.assertNotIn("think", sent_payload_q.get("options", {}))
-        self.assertEqual(sent_payload_q["options"]["num_predict"], 2000)
+        self.assertEqual(sent_payload_q["options"]["num_predict"], qgen.ollama_question_num_predict)
 
     # -----------------------------------------------------------------------
     # SENARYO 12: Ollama done_reason=length ve Boş Yanıt Yönetimi
@@ -555,6 +555,127 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         self.assertEqual(res_b2["kaynak_tipi"], "rag_fallback")
         # mock_post çağrı sayısı hala 1 olmalı! (Bölüm 2 için hiç istek yapılmadı)
         self.assertEqual(mock_post.call_count, 1)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 16: Pedagojik Normalizasyon Konuşma Kalıplarını ve Yönergeleri Temizler
+    # -----------------------------------------------------------------------
+    def test_scenario_16_pedagogical_normalization_filters_conversational_phrases(self):
+        yasakli_girdiler = [
+            "Bugünkü dersimizde birlikte keşfedeceğiz.",
+            "Önce şu örnekle başlayalım.",
+            "Sınıf arkadaşlarımızla tartışalım.",
+            "Merak ettiğimiz soruları aşağıdaki alana yazalım.",
+            "Kemerlerinizi bağlayın, fen bilimleri uçağımızla yeni bilgiler öğrenmeye doğru yola çıkıyoruz!",
+            "Bir sonraki dersimizde elektrik kaynaklarını daha detaylı inceleyeceğiz.",
+            "Hepinize iyi çalışmalar ve başarılar diliyorum!"
+        ]
+
+        for y in yasakli_girdiler:
+            temiz = GeminiAnalyzer.pedagojik_anlatim_normallestir(y)
+            # Tek başına verilen yasaklı cümle tamamen elenmelidir
+            self.assertEqual(temiz, "", f"Yasaklı cümle elenmedi: {y}")
+
+        # Karışık metin testi (Yasaklı cümleler + ders kitabı metni)
+        karisik_metin = (
+            "Bugünkü dersimizde birlikte keşfedeceğiz. "
+            "Günlük yaşamda kullanılan birçok araç ve gereç, çalışabilmek için elektrik enerjisine ihtiyaç duyar. "
+            "Önce şu örnekle başlayalım. "
+            "Elektrik enerjisi; araçların ışık vermesini, hareket etmesini, ısı üretmesini veya çeşitli görevleri yerine getirmesini sağlar.\n\n"
+            "Sınıf arkadaşlarımızla tartışalım. "
+            "Elektrikli araçlar ihtiyaç duydukları enerjiyi şehir elektriği, pil, batarya ve akü gibi farklı kaynaklardan elde edebilir. "
+            "Merak ettiğimiz soruları aşağıdaki alana yazalım. "
+            "Örneğin el feneri pille, televizyon şehir elektriğiyle, cep telefonu ise şarj edilebilir bataryayla çalışır."
+        )
+
+        beklenen = (
+            "Günlük yaşamda kullanılan birçok araç ve gereç, çalışabilmek için elektrik enerjisine ihtiyaç duyar. "
+            "Elektrik enerjisi; araçların ışık vermesini, hareket etmesini, ısı üretmesini veya çeşitli görevleri yerine getirmesini sağlar.\n\n"
+            "Elektrikli araçlar ihtiyaç duydukları enerjiyi şehir elektriği, pil, batarya ve akü gibi farklı kaynaklardan elde edebilir. "
+            "Örneğin el feneri pille, televizyon şehir elektriğiyle, cep telefonu ise şarj edilebilir bataryayla çalışır."
+        )
+
+        sonuc = GeminiAnalyzer.pedagojik_anlatim_normallestir(karisik_metin)
+        self.assertEqual(sonuc, beklenen)
+
+        # Kullanıcının beklediği saf ders kitabı metni normalizasyondan %100 aynen çıkmalıdır
+        self.assertEqual(GeminiAnalyzer.pedagojik_anlatim_normallestir(beklenen), beklenen)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 17: Simülasyon Şablonları Tamamen Nesnel ve Ders Kitabı Üslubundadır
+    # -----------------------------------------------------------------------
+    def test_scenario_17_simulation_templates_are_objective_and_pure(self):
+        analyzer = GeminiAnalyzer(api_key="")
+
+        yasakli_sozcukler = [
+            "keşfedeceğiz",
+            "öğreneceğiz",
+            "tartışalım",
+            "başlayalım",
+            "öğrendik",
+            "kemerlerinizi",
+            "dersimize hoş geldiniz",
+            "arkadaşlarımızla"
+        ]
+
+        # Şablon 1: Araç ve Gereçler
+        sim1 = analyzer._orijinal_materyal_simulasyonu("İlkokul", "3. Sınıf", "Fen Bilimleri", "Elektrikli Araç ve Gereçler")
+        self.assertEqual(len(sim1["bolumler"]), 10)
+        for b in sim1["bolumler"]:
+            anlatim = b.get("duzenlenmis_anlatim", "").lower()
+            for yasak in yasakli_sozcukler:
+                self.assertNotIn(yasak, anlatim, f"Şablon 1 Bölüm {b['bolum_no']} içinde '{yasak}' bulundu!")
+
+        # Şablon 2: Elektrik Kaynakları (Analiz videosu)
+        sim2 = analyzer._orijinal_materyal_simulasyonu("İlkokul", "3. Sınıf", "Fen Bilimleri", "Elektrik Kaynakları")
+        self.assertEqual(len(sim2["bolumler"]), 10)
+        for b in sim2["bolumler"]:
+            anlatim = b.get("duzenlenmis_anlatim", "").lower()
+            for yasak in yasakli_sozcukler:
+                self.assertNotIn(yasak, anlatim, f"Şablon 2 Bölüm {b['bolum_no']} içinde '{yasak}' bulundu!")
+
+        # Bölüm 1 tam metin doğrulaması (kullanıcının beklediği örnek metin)
+        b1_anlatim = sim2["bolumler"][0]["duzenlenmis_anlatim"]
+        self.assertIn("Günlük yaşamda kullanılan birçok araç ve gereç, çalışabilmek için elektrik enerjisine ihtiyaç duyar.", b1_anlatim)
+        self.assertIn("Örneğin el feneri pille, televizyon şehir elektriğiyle, cep telefonu ise şarj edilebilir bataryayla çalışır.", b1_anlatim)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 18: Yapay Zeka Sentez Çıktılarının Otomatik Normalleştirilmesi
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_18_ollama_and_gemini_synthesis_outputs_normalized(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": json.dumps({
+                "duzenlenmis_anlatim": (
+                    "Bugünkü dersimizde birlikte keşfedeceğiz. "
+                    "Pil, az miktarda elektrik enerjisi harcayan küçük araçları çalıştırmak için kullanılır. "
+                    "Sınıf arkadaşlarımızla tartışalım."
+                ),
+                "onemli_kavramlar": [{"kavram": "Pil", "aciklama": "Elektrik kaynağı."}]
+            })
+        }
+        mock_post.return_value = mock_resp
+
+        analyzer = GeminiAnalyzer(api_key="")
+        bolum = {
+            "bolum_no": 4,
+            "bolum_basligi": "Bölüm 4 – Pil",
+            "transkript": "Pil az enerji depolar.",
+            "duzenlenmis_anlatim": "Eski metin"
+        }
+        rag_sonuc = {
+            "bilgi": {"baglam": "MEB Pil"},
+            "pedagoji": {"baglam": "MEB Pedagoji"}
+        }
+
+        sonuc = analyzer.bolum_pedagojik_sentezle(bolum, rag_sonuc)
+        self.assertEqual(sonuc["kaynak_tipi"], "ollama")
+
+        # Öğretmen konuşması cümleleri atılmış, sadece nesnel ders kitabı cümlesi kalmış olmalıdır
+        self.assertNotIn("Bugünkü dersimizde birlikte keşfedeceğiz.", sonuc["duzenlenmis_anlatim"])
+        self.assertNotIn("Sınıf arkadaşlarımızla tartışalım.", sonuc["duzenlenmis_anlatim"])
+        self.assertIn("Pil, az miktarda elektrik enerjisi harcayan küçük araçları çalıştırmak için kullanılır.", sonuc["duzenlenmis_anlatim"])
 
 
 if __name__ == "__main__":
