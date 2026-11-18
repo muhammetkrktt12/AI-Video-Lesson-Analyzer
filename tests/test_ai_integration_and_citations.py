@@ -16,6 +16,7 @@ Bu test paketi 10 kritik senaryoyu doğrular:
 """
 
 import os
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -361,6 +362,196 @@ class TestAIIntegrationAndCitations(unittest.TestCase):
         # Asla sayfa uydurmamalı, doğrulanmadığını belirtmeli
         self.assertEqual(q_bos["kazanim_referansi"], "Doğrulanmış ders kitabı kaynağı bulunamadı")
         self.assertFalse(q_bos.get("rag_dogrulandi"))
+
+    # -----------------------------------------------------------------------
+    # SENARYO 11: Ollama Payloadında Üst Düzey think=False ve num_predict Doğrulaması
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_11_ollama_payload_top_level_think_and_num_predict(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": '{"bolumler": [{"bolum_no": 1, "bolum_basligi": "B", "duzenlenmis_anlatim": "A", "onemli_kavramlar": []}]}'
+        }
+        mock_post.return_value = mock_resp
+
+        analyzer = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
+
+        # 1. Analiz çağrısı payload testi
+        analyzer._ollama_ile_analiz_et("Analiz İstem")
+        self.assertTrue(mock_post.called)
+        sent_payload = mock_post.call_args[1]["json"]
+
+        # think=False üst düzeyde olmalı
+        self.assertIn("think", sent_payload)
+        self.assertFalse(sent_payload["think"])
+        # options içinde think olmamalı
+        self.assertNotIn("think", sent_payload.get("options", {}))
+        # format=json ve stream=False olmalı
+        self.assertEqual(sent_payload["format"], "json")
+        self.assertFalse(sent_payload["stream"])
+        # num_predict analiz için uygun değerde olmalı (3500)
+        self.assertEqual(sent_payload["options"]["num_predict"], 3500)
+
+        # 2. Bölüm pedagojik sentez payload testi
+        mock_resp.json.return_value = {
+            "response": '{"duzenlenmis_anlatim": "Pedagojik metin...", "onemli_kavramlar": []}'
+        }
+        analyzer._ollama_tekil_sentez("Bölüm İstem")
+        sent_payload_section = mock_post.call_args[1]["json"]
+        self.assertIn("think", sent_payload_section)
+        self.assertFalse(sent_payload_section["think"])
+        self.assertNotIn("think", sent_payload_section.get("options", {}))
+        self.assertEqual(sent_payload_section["options"]["num_predict"], 800)
+
+        # 3. Soru üretimi payload testi
+        mock_resp.json.return_value = {
+            "response": '{"sorular": [{"no": 1, "soru": "S1", "secenekler": ["A"], "dogru_cevap": "A", "aciklama": "Aciklama", "kategori": "K", "ilgili_kavram": "K", "tip": "Coktan Secmeli"}] * 5}'
+        }
+        # Geçerli 5 soru içeren JSON
+        valid_q_json = json.dumps({
+            "sorular": [
+                {"no": i, "soru": f"S{i}", "secenekler": ["A", "B"], "dogru_cevap": "A", "aciklama": "Gerekce", "kategori": "💡 Kavram", "ilgili_kavram": "Elektrik", "tip": "Çoktan Seçmeli"}
+                for i in range(1, 6)
+            ]
+        })
+        mock_resp.json.return_value = {"response": valid_q_json}
+        qgen = QuestionGenerator(api_key="AIzaTestKeyForMockingOnly123456789")
+        qgen._ollama_ile_soru_uret("Soru İstem")
+        sent_payload_q = mock_post.call_args[1]["json"]
+        self.assertIn("think", sent_payload_q)
+        self.assertFalse(sent_payload_q["think"])
+        self.assertNotIn("think", sent_payload_q.get("options", {}))
+        self.assertEqual(sent_payload_q["options"]["num_predict"], 2000)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 12: Ollama done_reason=length ve Boş Yanıt Yönetimi
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_12_ollama_done_reason_length_and_empty_response(self, mock_post):
+        analyzer = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
+
+        # 1. done_reason="length" ama geçerli JSON parçası kurtarılamıyor
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "done_reason": "length",
+            "response": '{"bolumler": [{"bolum_no": 1, ' # Kesilmiş JSON
+        }
+        mock_post.return_value = mock_resp
+        res = analyzer._ollama_ile_analiz_et("Test Prompt")
+        self.assertIsNone(res)
+
+        # 2. Tamamen boş response alanı
+        mock_resp.json.return_value = {
+            "done_reason": "stop",
+            "response": "   "
+        }
+        res_empty = analyzer._ollama_ile_analiz_et("Test Prompt")
+        self.assertIsNone(res_empty)
+
+        # 3. Bölüm sentezinde done_reason="length" ve kesilmiş metin
+        res_sec = analyzer._ollama_tekil_sentez("Bölüm Prompt")
+        self.assertIsNone(res_sec)
+
+        # 4. Soru üretiminde boş response
+        qgen = QuestionGenerator(api_key="AIzaTestKeyForMockingOnly123456789")
+        res_q = qgen._ollama_ile_soru_uret("Soru Prompt")
+        self.assertIsNone(res_q)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 13: Ollama JSON Ayrıştırma ve HTTP Hataları Yönetimi
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_13_ollama_json_parse_and_http_errors(self, mock_post):
+        analyzer = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
+
+        # 1. HTTP 500 İç Sunucu Hatası
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.json.return_value = {"error": "Internal server error"}
+        mock_post.return_value = mock_resp
+        res_500 = analyzer._ollama_ile_analiz_et("Test Prompt")
+        self.assertIsNone(res_500)
+        self.assertTrue(analyzer._ollama_devre_disi)
+
+        # 2. HTTP 200 ancak metin JSON değil
+        analyzer_2 = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "done_reason": "stop",
+            "response": "Bu bir model çıktısıdır ama JSON değildir."
+        }
+        res_invalid_json = analyzer_2._ollama_ile_analiz_et("Test Prompt")
+        self.assertIsNone(res_invalid_json)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 14: Tekrarlayan Zaman Aşımını Önleme (Circuit Breaker)
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_14_circuit_breaker_prevents_cascading_delays(self, mock_post):
+        mock_post.side_effect = requests.exceptions.Timeout("Ollama connection timed out")
+
+        analyzer = GeminiAnalyzer(api_key="AIzaTestKeyForMockingOnly123456789")
+        self.assertFalse(analyzer._ollama_devre_disi)
+
+        # İlk çağrı zaman aşımına uğrar ve devreyi açar (circuit breaker)
+        res1 = analyzer._ollama_ile_analiz_et("Test 1")
+        self.assertIsNone(res1)
+        self.assertTrue(analyzer._ollama_devre_disi)
+        self.assertEqual(mock_post.call_count, 1)
+
+        # İkinci çağrı istek göndermeden derhal None döner
+        res2 = analyzer._ollama_ile_analiz_et("Test 2")
+        self.assertIsNone(res2)
+        # mock_post çağrı sayısı artmamalı
+        self.assertEqual(mock_post.call_count, 1)
+
+        # Bölüm sentezi de devre açıkken istek göndermez
+        res_sec = analyzer._ollama_tekil_sentez("Bölüm 1")
+        self.assertIsNone(res_sec)
+        self.assertEqual(mock_post.call_count, 1)
+
+    # -----------------------------------------------------------------------
+    # SENARYO 15: Bölüm Sentezinde İlk Bölüm Hata Verince Kalan Bölümlerde Ollama Atlanması
+    # -----------------------------------------------------------------------
+    @patch("requests.post")
+    def test_scenario_15_section_circuit_breaker_in_bolum_sentezle(self, mock_post):
+        # 1. bölümde timeout ver
+        mock_post.side_effect = requests.exceptions.Timeout("Section 1 timeout")
+
+        analyzer = GeminiAnalyzer(api_key="")  # Gemini yok, RAG fallback bekliyoruz
+
+        bolum_1 = {
+            "bolum_no": 1,
+            "bolum_basligi": "Bölüm 1",
+            "transkript": "Transkript 1",
+            "duzenlenmis_anlatim": "Eski Anlatım",
+            "onemli_kavramlar": []
+        }
+        rag_sonuc = {
+            "bilgi": {"baglam": "MEB Bilgi"},
+            "pedagoji": {"baglam": "MEB Pedagoji"}
+        }
+
+        # Bölüm 1 sentezle -> Ollama timeout yaşar, _ollama_devre_disi = True olur
+        res_b1 = analyzer.bolum_pedagojik_sentezle(bolum_1, rag_sonuc)
+        self.assertEqual(res_b1["kaynak_tipi"], "rag_fallback")
+        self.assertTrue(analyzer._ollama_devre_disi)
+        self.assertEqual(mock_post.call_count, 1)
+
+        # Bölüm 2 sentezle -> Ollama istek göndermeden anında atlanır
+        bolum_2 = {
+            "bolum_no": 2,
+            "bolum_basligi": "Bölüm 2",
+            "transkript": "Transkript 2",
+            "duzenlenmis_anlatim": "Eski Anlatım 2",
+            "onemli_kavramlar": []
+        }
+        res_b2 = analyzer.bolum_pedagojik_sentezle(bolum_2, rag_sonuc)
+        self.assertEqual(res_b2["kaynak_tipi"], "rag_fallback")
+        # mock_post çağrı sayısı hala 1 olmalı! (Bölüm 2 için hiç istek yapılmadı)
+        self.assertEqual(mock_post.call_count, 1)
 
 
 if __name__ == "__main__":

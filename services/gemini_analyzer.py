@@ -39,6 +39,8 @@ try:
         OLLAMA_TIMEOUT,
         OLLAMA_ANALYSIS_TIMEOUT,
         OLLAMA_SECTION_TIMEOUT,
+        OLLAMA_ANALYSIS_NUM_PREDICT,
+        OLLAMA_SECTION_NUM_PREDICT,
     )
 except ImportError:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -48,9 +50,11 @@ except ImportError:
     GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-flash-latest").split(",") if m.strip()]
     OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
-    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
-    OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "90"))
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+    OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "120"))
     OLLAMA_SECTION_TIMEOUT = int(os.getenv("OLLAMA_SECTION_TIMEOUT", "45"))
+    OLLAMA_ANALYSIS_NUM_PREDICT = int(os.getenv("OLLAMA_ANALYSIS_NUM_PREDICT", "3500"))
+    OLLAMA_SECTION_NUM_PREDICT = int(os.getenv("OLLAMA_SECTION_NUM_PREDICT", "800"))
 
 
 class GeminiAnalyzer:
@@ -76,8 +80,10 @@ class GeminiAnalyzer:
         ollama_timeout: int = OLLAMA_TIMEOUT,
         ollama_analysis_timeout: int = OLLAMA_ANALYSIS_TIMEOUT,
         ollama_section_timeout: int = OLLAMA_SECTION_TIMEOUT,
+        ollama_analysis_num_predict: int = OLLAMA_ANALYSIS_NUM_PREDICT,
+        ollama_section_num_predict: int = OLLAMA_SECTION_NUM_PREDICT,
     ):
-        self.api_key = api_key or GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        self.api_key = api_key if api_key is not None else (GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", ""))
         self.model = model
         self.ollama_url = ollama_url or OLLAMA_URL
         self.ollama_model = ollama_model or OLLAMA_MODEL
@@ -87,6 +93,9 @@ class GeminiAnalyzer:
         self.ollama_timeout = ollama_timeout
         self.ollama_analysis_timeout = ollama_analysis_timeout
         self.ollama_section_timeout = ollama_section_timeout
+        self.ollama_analysis_num_predict = ollama_analysis_num_predict
+        self.ollama_section_num_predict = ollama_section_num_predict
+        self._ollama_devre_disi = False
         self.base_url = "https://generativelanguage.googleapis.com"
 
     def _api_anahtari_var_mi(self) -> bool:
@@ -104,7 +113,7 @@ class GeminiAnalyzer:
             elif "```" in metin:
                 metin = metin.split("```")[1].split("```")[0].strip()
             veri = json.loads(metin)
-            if isinstance(veri, dict) and "bolumler" in veri and len(veri["bolumler"]) > 0:
+            if isinstance(veri, dict):
                 return veri
         except Exception:
             pass
@@ -202,6 +211,9 @@ class GeminiAnalyzer:
 
     def _ollama_tekil_sentez(self, istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Ollama ile tek bir bölüm için odaklı pedagojik sentez."""
+        if self._ollama_devre_disi:
+            return None
+
         tout = timeout or self.ollama_section_timeout
         try:
             payload = {
@@ -209,18 +221,43 @@ class GeminiAnalyzer:
                 "prompt": istemi,
                 "stream": False,
                 "format": "json",
+                "think": False,
                 "options": {
                     "num_thread": 16,
-                    "num_predict": 300,
+                    "num_predict": self.ollama_section_num_predict,
                     "temperature": 0.2
                 }
             }
             res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=tout)
             if res.status_code == 200:
-                metin = res.json().get("response", "").strip()
-                return self._json_ayristir(metin)
-        except Exception:
-            pass
+                data = res.json()
+                done_reason = data.get("done_reason")
+                if done_reason == "length":
+                    print(f" -> [UYARI] Ollama bölüm sentezi token sınırına ulaştı (done_reason=length, num_predict={self.ollama_section_num_predict}).")
+                metin = data.get("response", "").strip()
+                if not metin:
+                    print(" -> [UYARI] Ollama bölüm sentezi boş yanıt döndürdü (response boş).")
+                    return None
+                veri = self._json_ayristir(metin)
+                if not veri:
+                    print(" -> [UYARI] Ollama bölüm sentezi yanıtı geçerli JSON formatına ayrıştırılamadı.")
+                    return None
+                return veri
+            else:
+                print(f" -> [UYARI] Ollama bölüm sentezi HTTP Hatası: {res.status_code}")
+                if res.status_code in (404, 500, 502, 503):
+                    self._ollama_devre_disi = True
+                return None
+        except requests.exceptions.Timeout:
+            print(f" -> [UYARI] Ollama bölüm sentezi zaman aşımına uğradı ({tout}s).")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Zincirleme zaman aşımını önlemek için bu oturumda sonraki Ollama çağrıları atlanacak.")
+        except requests.exceptions.ConnectionError as e:
+            print(f" -> [UYARI] Ollama servisine bağlanılamadı ({self.ollama_url}): {e}")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Ollama servisi çevrimdışı, sonraki çağrılar doğrudan yedek servise aktarılacak.")
+        except Exception as e:
+            print(f" -> [UYARI] Ollama bölüm sentezi beklenmedik hata: {e}")
         return None
 
     def _gemini_rest_sentez(self, istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -306,6 +343,9 @@ SADECE JSON döndür."""
 
     def _ollama_ile_analiz_et(self, sistem_istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """1. Tercih: Yerel Ollama modeli (qwen3.5:4b) ile analiz."""
+        if self._ollama_devre_disi:
+            return None
+
         tout = timeout or self.ollama_analysis_timeout
         try:
             print(f"[Yapay Zeka - 1. Tercih] Yerel Ollama ({self.ollama_model}) modeline istek gönderiliyor (Zaman aşımı: {tout}s)...")
@@ -313,21 +353,49 @@ SADECE JSON döndür."""
                 "model": self.ollama_model,
                 "prompt": sistem_istemi,
                 "stream": False,
-                "format": "json"
+                "format": "json",
+                "think": False,
+                "options": {
+                    "num_thread": 16,
+                    "num_predict": self.ollama_analysis_num_predict,
+                    "temperature": 0.2
+                }
             }
             res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=tout)
             if res.status_code == 200:
-                metin = res.json().get("response", "").strip()
+                data = res.json()
+                done_reason = data.get("done_reason")
+                if done_reason == "length":
+                    print(f" -> [UYARI] Ollama analiz yanıtı token sınırına ulaştı (done_reason=length, num_predict={self.ollama_analysis_num_predict}).")
+                metin = data.get("response", "").strip()
+                if not metin:
+                    print(" -> [UYARI] Ollama analiz için boş yanıt döndürdü (response boş).")
+                    return None
                 veri = self._json_ayristir(metin)
-                if veri:
-                    print(f" -> [BAŞARILI] Yerel Ollama ({self.ollama_model}) analiz ve materyal bölümlendirmeyi tamamladı ({len(veri['bolumler'])} bölüm).")
-                    return veri
-                else:
-                    print(f" -> [UYARI] Ollama yanıtı geçerli JSON formatında değil.")
+                if not veri:
+                    print(" -> [UYARI] Ollama analiz yanıtı geçerli JSON formatına ayrıştırılamadı.")
+                    return None
+                bolumler = veri.get("bolumler", [])
+                if not bolumler:
+                    print(" -> [UYARI] Ollama JSON çıktısında 'bolumler' listesi bulunamadı veya boş.")
+                    return None
+                print(f" -> [BAŞARILI] Yerel Ollama ({self.ollama_model}) analiz ve materyal bölümlendirmeyi tamamladı ({len(bolumler)} bölüm).")
+                return veri
             else:
                 print(f" -> [UYARI] Ollama HTTP Hatası: {res.status_code}")
+                if res.status_code in (404, 500, 502, 503):
+                    self._ollama_devre_disi = True
+                return None
+        except requests.exceptions.Timeout:
+            print(f" -> [UYARI] Ollama analiz isteği zaman aşımına uğradı ({tout}s).")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Zincirleme zaman aşımını önlemek için bu oturumda sonraki Ollama çağrıları atlanacak.")
+        except requests.exceptions.ConnectionError as e:
+            print(f" -> [UYARI] Ollama servisine bağlanılamadı ({self.ollama_url}): {e}")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Ollama servisi çevrimdışı, sonraki çağrılar doğrudan yedek servise aktarılacak.")
         except Exception as e:
-            print(f" -> [BİLGİ] Yerel Ollama ({self.ollama_model}) ile bağlantı kurulamadı veya zaman aşımına uğradı: {e}")
+            print(f" -> [UYARI] Ollama analiz hatası: {e}")
         return None
 
     def _gemini_ile_analiz_et(self, sistem_istemi: str) -> Optional[Dict[str, Any]]:

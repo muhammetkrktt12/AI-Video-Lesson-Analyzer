@@ -29,6 +29,7 @@ try:
         OLLAMA_URL,
         OLLAMA_MODEL,
         OLLAMA_QUESTION_TIMEOUT,
+        OLLAMA_QUESTION_NUM_PREDICT,
     )
 except ImportError:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -38,7 +39,8 @@ except ImportError:
     GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-flash-latest").split(",") if m.strip()]
     OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
-    OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "60"))
+    OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "90"))
+    OLLAMA_QUESTION_NUM_PREDICT = int(os.getenv("OLLAMA_QUESTION_NUM_PREDICT", "2000"))
 
 
 class QuestionGenerator:
@@ -61,8 +63,9 @@ class QuestionGenerator:
         gemini_max_retries: int = GEMINI_MAX_RETRIES,
         fallback_models: Optional[List[str]] = None,
         ollama_question_timeout: int = OLLAMA_QUESTION_TIMEOUT,
+        ollama_question_num_predict: int = OLLAMA_QUESTION_NUM_PREDICT,
     ):
-        self.api_key = api_key or GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        self.api_key = api_key if api_key is not None else (GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", ""))
         self.model = model
         self.ollama_url = ollama_url or OLLAMA_URL
         self.ollama_model = ollama_model or OLLAMA_MODEL
@@ -70,6 +73,8 @@ class QuestionGenerator:
         self.gemini_max_retries = gemini_max_retries
         self.fallback_models = fallback_models if fallback_models is not None else list(GEMINI_FALLBACK_MODELS)
         self.ollama_question_timeout = ollama_question_timeout
+        self.ollama_question_num_predict = ollama_question_num_predict
+        self._ollama_devre_disi = False
 
     def _api_anahtari_var_mi(self) -> bool:
         return bool(self.api_key and len(self.api_key.strip()) > 10 and not self.api_key.startswith("AIzaSyDummy"))
@@ -87,6 +92,10 @@ class QuestionGenerator:
             veri = json.loads(metin)
             if isinstance(veri, dict) and "sorular" in veri:
                 veri = veri["sorular"]
+            elif isinstance(veri, dict) and "questions" in veri:
+                veri = veri["questions"]
+            elif isinstance(veri, dict) and "soru" in veri:
+                veri = [veri]
             if isinstance(veri, list) and len(veri) > 0:
                 for idx, q in enumerate(veri, 1):
                     q["no"] = idx
@@ -113,20 +122,22 @@ GÖREV: Bu ders için tam {soru_sayisi} adet pedagojik, seviyeye uygun özgün d
 Soruların çoğu Çoktan Seçmeli (A, B, C, D seçenekli), en az 2 tanesi Doğru - Yanlış formatında olmalıdır.
 
 JSON FORMATI:
-[
-  {{
-    "no": 1,
-    "kategori": "💡 Kavram Keşfi",
-    "ilgili_kavram": "Kavram Adı",
-    "tip": "Çoktan Seçmeli",
-    "soru": "Soru metni...",
-    "secenekler": ["A) ...", "B) ...", "C) ...", "D) ..."],
-    "dogru_cevap": "A",
-    "aciklama": "Gerekçeli çözüm açıklaması.",
-    "kazanim_referansi": "MEB Ders Kitabı"
-  }}
-]
-SADECE geçerli bir JSON dizisi döndür."""
+{{
+  "sorular": [
+    {{
+      "no": 1,
+      "kategori": "💡 Kavram Keşfi",
+      "ilgili_kavram": "Kavram Adı",
+      "tip": "Çoktan Seçmeli",
+      "soru": "Soru metni...",
+      "secenekler": ["A) ...", "B) ...", "C) ...", "D) ..."],
+      "dogru_cevap": "A",
+      "aciklama": "Gerekçeli çözüm açıklaması.",
+      "kazanim_referansi": "MEB Ders Kitabı"
+    }}
+  ]
+}}
+SADECE geçerli bir JSON nesnesi döndür."""
 
     def _gemini_api_cagir(
         self,
@@ -158,7 +169,7 @@ SADECE geçerli bir JSON dizisi döndür."""
                             parts = cands[0]["content"].get("parts", [])
                             if parts and "text" in parts[0]:
                                 sorular = self._json_sorulari_ayristir(parts[0]["text"].strip())
-                                if sorular and len(sorular) >= 5:
+                                if sorular and len(sorular) >= 1:
                                     return sorular
                     elif res.status_code == 503:
                         hata_mesaji = "Sunucu aşırı yoğunluk bildiriyor (503 Service Unavailable)"
@@ -191,6 +202,9 @@ SADECE geçerli bir JSON dizisi döndür."""
         return None
 
     def _ollama_ile_soru_uret(self, istem: str, timeout: Optional[int] = None) -> Optional[List[Dict[str, Any]]]:
+        if self._ollama_devre_disi:
+            return None
+
         tout = timeout or self.ollama_question_timeout
         try:
             print(f"[QuestionGenerator - 1. Tercih] Yerel Ollama ({self.ollama_model}) ile soru üretiliyor (Zaman aşımı: {tout}s)...")
@@ -198,17 +212,48 @@ SADECE geçerli bir JSON dizisi döndür."""
                 "model": self.ollama_model,
                 "prompt": istem,
                 "stream": False,
-                "format": "json"
+                "format": "json",
+                "think": False,
+                "options": {
+                    "num_thread": 16,
+                    "num_predict": self.ollama_question_num_predict,
+                    "temperature": 0.2
+                }
             }
             res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=tout)
             if res.status_code == 200:
-                metin = res.json().get("response", "").strip()
+                data = res.json()
+                done_reason = data.get("done_reason")
+                if done_reason == "length":
+                    print(f" -> [UYARI] Ollama soru üretimi token sınırına ulaştı (done_reason=length, num_predict={self.ollama_question_num_predict}).")
+                metin = data.get("response", "").strip()
+                if not metin:
+                    print(" -> [UYARI] Ollama soru üretimi boş yanıt döndürdü (response boş).")
+                    return None
                 sorular = self._json_sorulari_ayristir(metin)
-                if sorular and len(sorular) >= 5:
-                    print(f" -> [BAŞARILI] Yerel Ollama ({self.ollama_model}) {len(sorular)} özgün soru üretti.")
-                    return sorular
+                if not sorular:
+                    print(" -> [UYARI] Ollama soru çıktısı JSON formatında ayrıştırılamadı.")
+                    return None
+                if len(sorular) < 1:
+                    print(" -> [UYARI] Ollama hiç soru üretemedi.")
+                    return None
+                print(f" -> [BAŞARILI] Yerel Ollama ({self.ollama_model}) {len(sorular)} özgün soru üretti.")
+                return sorular
+            else:
+                print(f" -> [UYARI] Ollama soru üretimi HTTP Hatası: {res.status_code}")
+                if res.status_code in (404, 500, 502, 503):
+                    self._ollama_devre_disi = True
+                return None
+        except requests.exceptions.Timeout:
+            print(f" -> [UYARI] Ollama soru üretimi zaman aşımına uğradı ({tout}s).")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Zincirleme zaman aşımını önlemek için bu oturumda sonraki Ollama çağrıları atlanacak.")
+        except requests.exceptions.ConnectionError as e:
+            print(f" -> [UYARI] Ollama servisine bağlanılamadı ({self.ollama_url}): {e}")
+            self._ollama_devre_disi = True
+            print(" -> [BİLGİ] Ollama servisi çevrimdışı, sonraki çağrılar doğrudan yedek servise aktarılacak.")
         except Exception as e:
-            print(f" -> [BİLGİ] Yerel Ollama soru üretiminde yanıt vermedi: {e}")
+            print(f" -> [UYARI] Ollama soru üretimi beklenmedik hata: {e}")
         return None
 
     def _gemini_ile_soru_uret(self, istem: str) -> Optional[List[Dict[str, Any]]]:
@@ -218,7 +263,7 @@ SADECE geçerli bir JSON dizisi döndür."""
             "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
         }
         sorular = self._gemini_api_cagir(payload, timeout=self.gemini_timeout)
-        if sorular and len(sorular) >= 5:
+        if sorular and len(sorular) >= 1:
             print(f" -> [BAŞARILI] Google Gemini ({self.model}) {len(sorular)} özgün soru üretti.")
             return sorular
         return None

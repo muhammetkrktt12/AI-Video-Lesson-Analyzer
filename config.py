@@ -58,10 +58,15 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "embeddinggemma")
 CHAT_MODEL = OLLAMA_MODEL
 
 # CPU üzerinde 4B+ model çıkarımı için gerçekçi zaman aşımı süreleri (saniye)
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
-OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "90"))
-OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "60"))
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "120"))
+OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "90"))
 OLLAMA_SECTION_TIMEOUT = int(os.getenv("OLLAMA_SECTION_TIMEOUT", "45"))
+
+# Görev bazlı token üretim sınırları (num_predict)
+OLLAMA_ANALYSIS_NUM_PREDICT = int(os.getenv("OLLAMA_ANALYSIS_NUM_PREDICT", "3500"))
+OLLAMA_QUESTION_NUM_PREDICT = int(os.getenv("OLLAMA_QUESTION_NUM_PREDICT", "2000"))
+OLLAMA_SECTION_NUM_PREDICT = int(os.getenv("OLLAMA_SECTION_NUM_PREDICT", "800"))
 
 # --- VIDEO İNDİRME AYARLARI ---
 DEFAULT_VIDEO_RESOLUTION = "720"  # 360 veya 720
