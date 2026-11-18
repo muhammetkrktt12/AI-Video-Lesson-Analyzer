@@ -462,8 +462,18 @@ class RAGMotoru:
             "tum_kaynaklar": [
                 {
                     "kaynak": d.metadata.get("source"),
+                    "dosya_adi": d.metadata.get("source"),
+                    "kitap_adi": d.metadata.get("kitap_adi") or d.metadata.get("source"),
+                    "sinif": d.metadata.get("sinif", ""),
+                    "unite": d.metadata.get("unite", ""),
+                    "konu": d.metadata.get("konu", ""),
+                    "alt_konu": d.metadata.get("alt_konu", ""),
                     "sayfa": d.metadata.get("page"),
-                    "referans": d.metadata.get("referans")
+                    "physical_page": d.metadata.get("physical_page") if d.metadata.get("physical_page") is not None else d.metadata.get("page"),
+                    "printed_page": d.metadata.get("printed_page") if d.metadata.get("has_printed_page") else None,
+                    "has_printed_page": d.metadata.get("has_printed_page", False),
+                    "referans": d.metadata.get("referans"),
+                    "chunk_id": d.metadata.get("chunk_id", ""),
                 }
                 for d in (bilgi_docs + pedagoji_docs + olcme_docs)
             ]

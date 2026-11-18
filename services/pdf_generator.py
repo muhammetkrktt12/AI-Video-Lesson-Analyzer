@@ -220,9 +220,9 @@ class PDFGenerator:
         self.style_ref_tag = ParagraphStyle(
             "EduRefTag",
             fontName=FONT_ITALIC,
-            fontSize=7.5,
-            leading=10,
-            textColor=colors.HexColor("#64748b"),
+            fontSize=6.8,
+            leading=8.8,
+            textColor=colors.HexColor("#475569"),
         )
 
         self.style_general_summary = ParagraphStyle(
@@ -261,8 +261,8 @@ class PDFGenerator:
         self.style_table_header = ParagraphStyle(
             "EduTblHdr",
             fontName=FONT_BOLD,
-            fontSize=8.5,
-            leading=11,
+            fontSize=7.5,
+            leading=9.5,
             textColor=colors.white,
             alignment=1,
         )
@@ -270,16 +270,16 @@ class PDFGenerator:
         self.style_table_cell = ParagraphStyle(
             "EduTblCell",
             fontName=FONT_REG,
-            fontSize=7.5,
-            leading=10.5,
+            fontSize=6.8,
+            leading=8.8,
             textColor=colors.HexColor("#1e293b"),
         )
 
         self.style_table_cell_bold = ParagraphStyle(
             "EduTblCellBold",
             fontName=FONT_BOLD,
-            fontSize=7.5,
-            leading=10.5,
+            fontSize=6.8,
+            leading=8.8,
             textColor=colors.HexColor("#1e293b"),
             alignment=1,
         )
@@ -350,6 +350,165 @@ class PDFGenerator:
         ]))
         return t
 
+    @staticmethod
+    def _temizle_dosya_yolu(metin: str) -> str:
+        """
+        Windows veya Unix dosya yollarını (örn: C:\\Users\\...\\video.mp4) temizleyerek
+        PDF başlıklarında yalnızca temiz, kullanıcı dostu ders adını gösterir.
+        """
+        if not metin:
+            return ""
+        metin_str = str(metin).strip()
+        # Eğer Windows yolu (C:\... veya C:/...) veya slash içeriyorsa
+        if re.search(r'^[a-zA-Z]:[\\/]', metin_str) or ("\\" in metin_str or "/" in metin_str):
+            p = Path(metin_str)
+            temiz = p.stem if p.suffix else p.name
+            return temiz.replace("_", " ").strip()
+        return metin_str
+
+    def _dinamik_kaynakca_derle(
+        self,
+        video_analizi: Dict[str, Any],
+        sorular: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[str]:
+        """
+        PDF için yalnızca kullanılan ve doğrulanmış RAG kayıtlarından oluşan dinamik kaynakça listesi derler.
+        Aynı kaynağa yapılan atıfları birleştirir (deduplicate).
+        Her kaynak için:
+          - Kitap adı ve dosya adı
+          - Sınıf düzeyi
+          - Ünite ve konu
+          - Fiziksel sayfa
+          - Basılı sayfa (mevcutsa)
+          - Kullanıldığı bölüm veya soru
+        Kesinlikle uydurma kazanım kodu veya sayfa numarası eklemez.
+        Doğrulanmış kaynak bulunamadığında açık fallback mesajı gösterir.
+        """
+        bolumler = video_analizi.get("bolumler", []) if isinstance(video_analizi, dict) else []
+        sorular_list = sorular or []
+
+        # Key: benzersiz kaynak kimliği -> {bilgiler, kullanildigi_yerler: set()}
+        kaynak_havuzu: Dict[str, Dict[str, Any]] = {}
+
+        # 1. Bölümlerden doğrulanmış kaynakları topla
+        for idx, b in enumerate(bolumler, start=1):
+            b_no = b.get("bolum_no", idx)
+            yer = f"Bölüm {b_no}"
+            b_ref = b.get("kitap_referansi")
+            rag_list = b.get("rag_kaynaklari") or []
+
+            if rag_list:
+                for r in rag_list:
+                    k_adi = r.get("kitap_adi") or r.get("kaynak") or "MEB Fen Bilimleri Ders Kitabı"
+                    dosya = r.get("dosya_adi") or r.get("kaynak") or ""
+                    sinif = r.get("sinif") or video_analizi.get("sinif_duzeyi", "")
+                    unite = r.get("unite", "")
+                    konu = r.get("konu", "")
+                    phys_page = r.get("physical_page") if r.get("physical_page") is not None else r.get("sayfa")
+                    prn_page = r.get("printed_page") if r.get("has_printed_page") else None
+
+                    key = f"{k_adi}_{dosya}_{phys_page}_{unite}_{konu}".strip().lower()
+                    if key not in kaynak_havuzu:
+                        kaynak_havuzu[key] = {
+                            "kitap_adi": k_adi,
+                            "dosya_adi": dosya,
+                            "sinif": sinif,
+                            "unite": unite,
+                            "konu": konu,
+                            "physical_page": phys_page,
+                            "printed_page": prn_page,
+                            "kullanildigi_yerler": set(),
+                        }
+                    kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
+            elif b_ref and b_ref != "MEB Ders Kitabı Referansı":
+                key = b_ref.strip().lower()
+                if key not in kaynak_havuzu:
+                    kaynak_havuzu[key] = {
+                        "ham_referans": b_ref,
+                        "kullanildigi_yerler": set(),
+                    }
+                kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
+
+        # 2. Sorulardan doğrulanmış kaynakları topla
+        for s in sorular_list:
+            s_no = s.get("no", 1)
+            yer = f"Soru {s_no}"
+            s_ref = s.get("kazanim_referansi")
+            s_rag = s.get("rag_kaynagi")
+
+            if s_rag:
+                k_adi = s_rag.get("kitap_adi") or s_rag.get("kaynak") or "MEB Fen Bilimleri Ders Kitabı"
+                dosya = s_rag.get("dosya_adi") or s_rag.get("kaynak") or ""
+                sinif = s_rag.get("sinif") or video_analizi.get("sinif_duzeyi", "")
+                unite = s_rag.get("unite", "")
+                konu = s_rag.get("konu", "")
+                phys_page = s_rag.get("physical_page") if s_rag.get("physical_page") is not None else s_rag.get("sayfa")
+                prn_page = s_rag.get("printed_page") if s_rag.get("has_printed_page") else None
+
+                key = f"{k_adi}_{dosya}_{phys_page}_{unite}_{konu}".strip().lower()
+                if key not in kaynak_havuzu:
+                    kaynak_havuzu[key] = {
+                        "kitap_adi": k_adi,
+                        "dosya_adi": dosya,
+                        "sinif": sinif,
+                        "unite": unite,
+                        "konu": konu,
+                        "physical_page": phys_page,
+                        "printed_page": prn_page,
+                        "kullanildigi_yerler": set(),
+                    }
+                kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
+            elif s_ref and s_ref not in ["MEB Ders Kitabı Referansı", "Doğrulanmış ders kitabı kaynağı bulunamadı", "MEB 3. Sınıf Fen Bilimleri"]:
+                key = s_ref.strip().lower()
+                if key not in kaynak_havuzu:
+                    kaynak_havuzu[key] = {
+                        "ham_referans": s_ref,
+                        "kullanildigi_yerler": set(),
+                    }
+                kaynak_havuzu[key]["kullanildigi_yerler"].add(yer)
+
+        # 3. Eğer hiç doğrulanmış kaynak bulunamadıysa:
+        if not kaynak_havuzu:
+            return ["<i>Bu bölüm için doğrulanmış ders kitabı kaynağı bulunamadı.</i>"]
+
+        # 4. Kaynakları formatla ve sırala
+        cikti_kaynaklar = []
+        for idx, (k, info) in enumerate(kaynak_havuzu.items(), 1):
+            yerler_sirali = sorted(
+                list(info["kullanildigi_yerler"]),
+                key=lambda x: (x.split()[0], int(x.split()[1]) if len(x.split()) > 1 and x.split()[1].isdigit() else 0)
+            )
+            yerler_str = ", ".join(yerler_sirali)
+
+            if "ham_referans" in info:
+                cikti_kaynaklar.append(
+                    f"<b>{idx}.</b> {info['ham_referans']} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
+                )
+            else:
+                k_ad = info.get("kitap_adi") or "MEB Ders Kitabı"
+                d_ad = f" (Dosya: {info['dosya_adi']})" if info.get("dosya_adi") else ""
+                sinif_str = f" | {info['sinif']}" if info.get("sinif") else ""
+
+                unite_parcalari = []
+                if info.get("unite"):
+                    unite_parcalari.append(f"Ünite: {info['unite']}")
+                if info.get("konu"):
+                    unite_parcalari.append(f"Konu: {info['konu']}")
+                unite_str = f" — {', '.join(unite_parcalari)}" if unite_parcalari else ""
+
+                sayfa_parcalari = []
+                if info.get("physical_page") is not None:
+                    sayfa_parcalari.append(f"Fiziksel Sayfa: {info['physical_page']}")
+                if info.get("printed_page") is not None and info["printed_page"] > 0:
+                    sayfa_parcalari.append(f"Basılı Sayfa: {info['printed_page']}")
+                sayfa_str = f" [{', '.join(sayfa_parcalari)}]" if sayfa_parcalari else ""
+
+                cikti_kaynaklar.append(
+                    f"<b>{idx}. {k_ad}</b>{d_ad}{sinif_str}{unite_str}{sayfa_str} — <i>(Kullanıldığı Yerler: {yerler_str})</i>"
+                )
+
+        return cikti_kaynaklar
+
     def pdf_olustur(
         self,
         video_analizi: Dict[str, Any],
@@ -361,10 +520,23 @@ class PDFGenerator:
         Görsel materyal değişimlerine dayalı 14 sayfalık tam teşekküllü kurumsal PDF fasikülünü üretir.
         """
         ders_adi = (video_analizi.get("ders_adi") or "FEN BİLİMLERİ").upper()
-        unite_basligi = video_analizi.get("unite_basligi") or "Elektrikli Araçlar ve Elektrik Kaynakları"
+        ham_unite = video_analizi.get("unite_basligi") or "Elektrikli Araçlar ve Elektrik Kaynakları"
+        unite_basligi = self._temizle_dosya_yolu(ham_unite)
+        temiz_video_kaynak = self._temizle_dosya_yolu(video_kaynak_bilgisi)
         egitim_seviyesi = video_analizi.get("egitim_seviyesi", "İlkokul")
         sinif_duzeyi = video_analizi.get("sinif_duzeyi", "3. Sınıf")
         tarih_str = datetime.now().strftime("%d.%m.%Y")
+
+        # Provenance / Üretim Kaynağı Rozeti
+        uretim_kaynagi = video_analizi.get("uretim_kaynagi", "rag_fallback")
+        if uretim_kaynagi == "ollama":
+            rozet = "<font color='#0284c7'><b>[Yerel Yapay Zeka (Ollama qwen3.5:4b)]</b></font>"
+        elif uretim_kaynagi == "gemini":
+            rozet = "<font color='#16a34a'><b>[Google Gemini API]</b></font>"
+        elif uretim_kaynagi == "rag_fallback":
+            rozet = "<font color='#d97706'><b>[Pedagojik RAG Bağlamı]</b></font>"
+        else:
+            rozet = "<font color='#64748b'><b>[MEB Müfredat Şablonu]</b></font>"
 
         guvenli_ad = re.sub(r'[\\/*?:"<>| ]', '_', f"{ders_adi}_{unite_basligi}")[:35]
         if not cikis_dosya_adi:
@@ -399,7 +571,7 @@ class PDFGenerator:
                 meta_metni = (
                     f"<b>Kademe:</b> {egitim_seviyesi} ({sinif_duzeyi}) &nbsp;&nbsp;|&nbsp;&nbsp; "
                     f"<b>Tarih:</b> {tarih_str} &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"<b>Kaynak:</b> {video_kaynak_bilgisi[:40]}"
+                    f"<b>Kaynak:</b> {temiz_video_kaynak[:45]} &nbsp;&nbsp;|&nbsp;&nbsp; {rozet}"
                 )
                 flowables.append(Paragraph(meta_metni, self.style_meta))
                 flowables.append(Spacer(1, 4))
@@ -464,8 +636,10 @@ class PDFGenerator:
 
             # Kitap Sayfa Referansı
             kitap_ref = bolum.get("kitap_referansi", "")
-            if kitap_ref:
+            if kitap_ref and kitap_ref != "MEB Ders Kitabı Referansı":
                 flowables.append(Paragraph(f"<b>MEB Ders Kitabı Doğrulaması:</b> <i>{kitap_ref}</i>", self.style_ref_tag))
+            else:
+                flowables.append(Paragraph("<b>MEB Ders Kitabı Doğrulaması:</b> <i>Bu bölüm için doğrulanmış ders kitabı kaynağı bulunamadı</i>", self.style_ref_tag))
 
         # ===================================================================
         # SAYFA 11: GENEL KONU ÖZETİ VE KAVRAM KARŞILAŞTIRMA TABLOSU
@@ -474,7 +648,7 @@ class PDFGenerator:
             flowables.append(PageBreak())
 
         flowables.append(Paragraph("<b>Dersin Genel Konu Özeti ve Kavram Sentezi</b>", self.style_super_title))
-        flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; {unite_basligi} &nbsp;|&nbsp; 3. Sınıf Düzeyi", self.style_meta))
+        flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; {unite_basligi} &nbsp;|&nbsp; {sinif_duzeyi} Düzeyi &nbsp;|&nbsp; {rozet}", self.style_meta))
         flowables.append(Spacer(1, 4))
         flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2563eb"), spaceAfter=10))
 
@@ -542,7 +716,7 @@ class PDFGenerator:
             # 1. BÖLÜM: Soru 1 – 5 (Sayfa 12)
             flowables.append(PageBreak())
             flowables.append(Paragraph("<b>ÖĞRENCİ ETKİNLİK VE DEĞERLENDİRME FASİKÜLÜ (1 / 2)</b>", self.style_super_title))
-            flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; Konu: {unite_basligi} &nbsp;|&nbsp; Soru 1 – 5", self.style_meta))
+            flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; Konu: {unite_basligi} &nbsp;|&nbsp; Soru 1 – 5 &nbsp;|&nbsp; {rozet}", self.style_meta))
             flowables.append(Spacer(1, 3))
             flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#059669"), spaceAfter=8))
 
@@ -556,7 +730,7 @@ class PDFGenerator:
             if len(sorular) > 5:
                 flowables.append(PageBreak())
                 flowables.append(Paragraph("<b>ÖĞRENCİ ETKİNLİK VE DEĞERLENDİRME FASİKÜLÜ (2 / 2)</b>", self.style_super_title))
-                flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; Konu: {unite_basligi} &nbsp;|&nbsp; Soru 6 – 10", self.style_meta))
+                flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; Konu: {unite_basligi} &nbsp;|&nbsp; Soru 6 – 10 &nbsp;|&nbsp; {rozet}", self.style_meta))
                 flowables.append(Spacer(1, 3))
                 flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#059669"), spaceAfter=8))
 
@@ -571,7 +745,7 @@ class PDFGenerator:
             # ===============================================================
             flowables.append(PageBreak())
             flowables.append(Paragraph("<b>DETAYLI ÇÖZÜMLÜ CEVAP ANAHTARI & KAZANIM EŞLEŞTİRME TABLOSU</b>", self.style_super_title))
-            flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; {unite_basligi} &nbsp;|&nbsp; MEB Müfredat Doğrulamalı", self.style_meta))
+            flowables.append(Paragraph(f"{ders_adi} &nbsp;|&nbsp; {unite_basligi} &nbsp;|&nbsp; Doğrulanmış Kaynakça &nbsp;|&nbsp; {rozet}", self.style_meta))
             flowables.append(Spacer(1, 3))
             flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2563eb"), spaceAfter=8))
 
@@ -589,47 +763,50 @@ class PDFGenerator:
                 s_kavram = s.get("ilgili_kavram", "-")
                 s_cevap = s.get("dogru_cevap", "-")
                 s_aciklama = s.get("aciklama", "")
-                s_ref = s.get("kazanim_referansi", "MEB 3. Sınıf Fen Bilimleri")
+                s_ref = s.get("kazanim_referansi", "")
+
+                if s_ref and s_ref not in ["Doğrulanmış ders kitabı kaynağı bulunamadı", "MEB Ders Kitabı"]:
+                    hucre_metni = f"<b>Kaynak:</b> {s_ref}<br/><b>Çözüm Gerekçesi:</b> {s_aciklama}"
+                else:
+                    hucre_metni = f"<font color='#dc2626'><i>Kaynak: Doğrulanmış ders kitabı kaynağı bulunamadı</i></font><br/><b>Çözüm Gerekçesi:</b> {s_aciklama}"
 
                 cevap_tablosu_verisi.append([
                     Paragraph(f"<b>Soru {s_no}</b>", self.style_table_cell_bold),
                     Paragraph(s_kavram, self.style_table_cell),
                     Paragraph(f"<b>{s_cevap}</b>", self.style_table_cell_bold),
-                    Paragraph(f"<b>[{s_ref}]</b><br/>{s_aciklama}", self.style_table_cell),
+                    Paragraph(hucre_metni, self.style_table_cell),
                 ])
 
-            ans_table = Table(cevap_tablosu_verisi, colWidths=[55, 115, 60, 281])
+            ans_table = Table(cevap_tablosu_verisi, colWidths=[42, 105, 48, 316])
             ans_table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
                 ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
                 ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#ffffff"), colors.HexColor("#f8fafc")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ]))
             flowables.append(ans_table)
-            flowables.append(Spacer(1, 10))
+            flowables.append(Spacer(1, 4))
 
-            # Yararlanılan Kaynaklar Bölümü
+            # Dinamik ve Doğrulanmış Kaynaklar Bölümü (Statik Kaynakça Tamamen Kaldırıldı)
+            dinamik_kaynaklar = self._dinamik_kaynakca_derle(video_analizi, sorular)
+            kaynak_metni = "<br/>".join(dinamik_kaynaklar)
+
             kaynak_kutusu = [
-                [Paragraph("<b>Yararlanılan Resmi Müfredat Kaynakları (RAG Doğrulamalı):</b>", self.style_box_label)],
-                [Paragraph(
-                    "1. <b>MEB 3. Sınıf Fen Bilimleri Ders Kitabı</b> (Milli Eğitim Bakanlığı Yayınları, 7. Ünite: Elektrikli Araçlar, Sayfa 180–189)<br/>"
-                    "2. <b>MEB Talim ve Terbiye Kurulu Başkanlığı</b> İlkokul Fen Bilimleri Dersi Öğretim Programı Kazanımları (F.3.7.1.1 & F.3.7.1.2)<br/>"
-                    "3. <b>TAP (Taşınabilir Pil Üreticileri ve İthalatçıları Derneği)</b> Çevre ve Atık Pil Eğitimi Yönetmeliği Referansları",
-                    self.style_ref_tag
-                )]
+                [Paragraph("<b>Yararlanılan Resmi Müfredat Kaynakları (Doğrulanmış RAG Kaynakçası):</b>", self.style_box_label)],
+                [Paragraph(kaynak_metni, self.style_ref_tag)]
             ]
             k_table = Table(kaynak_kutusu, colWidths=[511])
             k_table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f1f5f9")),
                 ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
             ]))
             flowables.append(k_table)
 

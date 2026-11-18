@@ -241,6 +241,7 @@ def gemini_analiz_dugumu(state: EduFrameState) -> Dict[str, Any]:
         # NOKTA ATIŞI: 768-Boyutlu RAG'dan gelen doğrulanmış kitap ve sayfa referansını bölüme aktar
         if rag_sonuc.get("en_iyi_referans"):
             bolum["kitap_referansi"] = rag_sonuc["en_iyi_referans"]
+        bolum["rag_kaynaklari"] = rag_sonuc.get("tum_kaynaklar", [])
 
         # Kaynak izlenebilirliği listesini topla
         for k_item in rag_sonuc.get("tum_kaynaklar", []):

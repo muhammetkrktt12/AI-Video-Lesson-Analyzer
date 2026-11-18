@@ -28,12 +28,29 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 try:
-    from config import GEMINI_API_KEY, GEMINI_MODEL, OLLAMA_URL, OLLAMA_MODEL
+    from config import (
+        GEMINI_API_KEY,
+        GEMINI_MODEL,
+        GEMINI_TIMEOUT,
+        GEMINI_MAX_RETRIES,
+        GEMINI_FALLBACK_MODELS,
+        OLLAMA_URL,
+        OLLAMA_MODEL,
+        OLLAMA_TIMEOUT,
+        OLLAMA_ANALYSIS_TIMEOUT,
+        OLLAMA_SECTION_TIMEOUT,
+    )
 except ImportError:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL = "gemini-3.8-flash"
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "20"))
+    GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+    GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-flash-latest").split(",") if m.strip()]
     OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
+    OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "90"))
+    OLLAMA_SECTION_TIMEOUT = int(os.getenv("OLLAMA_SECTION_TIMEOUT", "45"))
 
 
 class GeminiAnalyzer:
@@ -53,11 +70,23 @@ class GeminiAnalyzer:
         model: str = GEMINI_MODEL,
         ollama_url: str = OLLAMA_URL,
         ollama_model: str = OLLAMA_MODEL,
+        gemini_timeout: int = GEMINI_TIMEOUT,
+        gemini_max_retries: int = GEMINI_MAX_RETRIES,
+        fallback_models: Optional[List[str]] = None,
+        ollama_timeout: int = OLLAMA_TIMEOUT,
+        ollama_analysis_timeout: int = OLLAMA_ANALYSIS_TIMEOUT,
+        ollama_section_timeout: int = OLLAMA_SECTION_TIMEOUT,
     ):
         self.api_key = api_key or GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
         self.model = model
         self.ollama_url = ollama_url or OLLAMA_URL
         self.ollama_model = ollama_model or OLLAMA_MODEL
+        self.gemini_timeout = gemini_timeout
+        self.gemini_max_retries = gemini_max_retries
+        self.fallback_models = fallback_models if fallback_models is not None else list(GEMINI_FALLBACK_MODELS)
+        self.ollama_timeout = ollama_timeout
+        self.ollama_analysis_timeout = ollama_analysis_timeout
+        self.ollama_section_timeout = ollama_section_timeout
         self.base_url = "https://generativelanguage.googleapis.com"
 
     def _api_anahtari_var_mi(self) -> bool:
@@ -109,8 +138,71 @@ class GeminiAnalyzer:
 
         return metin if len(metin) > 15 else ham_metin.strip()
 
-    def _ollama_tekil_sentez(self, istemi: str, timeout: int = 8) -> Optional[Dict[str, Any]]:
+    def _gemini_api_cagir(
+        self,
+        payload: Dict[str, Any],
+        timeout: Optional[int] = None,
+        max_retries: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Google Gemini API'ye istek gönderir.
+        HTTP 503 (High Demand / Sunucu Aşırı Yoğun) durumunda exponential backoff ile yeniden dener.
+        Gerektiğinde tanımlı alternatif modellere (GEMINI_FALLBACK_MODELS) geçer.
+        """
+        if not self._api_anahtari_var_mi():
+            return None
+
+        timeout_sec = timeout or self.gemini_timeout
+        retries = max_retries if max_retries is not None else self.gemini_max_retries
+        models_to_try = [self.model] + [m for m in self.fallback_models if m != self.model]
+
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+        for current_model in models_to_try:
+            for attempt in range(retries + 1):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent"
+                try:
+                    res = requests.post(url, json=payload, headers=headers, timeout=timeout_sec)
+                    if res.status_code == 200:
+                        cands = res.json().get("candidates", [])
+                        if cands and "content" in cands[0]:
+                            parts = cands[0]["content"].get("parts", [])
+                            if parts and "text" in parts[0]:
+                                parsed = self._json_ayristir(parts[0]["text"].strip())
+                                if parsed:
+                                    return parsed
+                    elif res.status_code == 503:
+                        hata_mesaji = "Sunucu aşırı yoğunluk bildiriyor (503 Service Unavailable)"
+                        try:
+                            err_data = res.json().get("error", {})
+                            if "message" in err_data:
+                                hata_mesaji = err_data["message"]
+                        except Exception:
+                            pass
+                        print(f" -> [UYARI] Google Gemini API ({current_model}) 503 hatası: {hata_mesaji} (Deneme {attempt + 1}/{retries + 1})")
+                        if attempt < retries:
+                            backoff = 1.5 * (2 ** attempt)
+                            time.sleep(backoff)
+                            continue
+                    elif res.status_code == 429:
+                        print(f" -> [UYARI] Google Gemini API ({current_model}) günlük kota veya hız limiti (429) dolmuş.")
+                        break
+                    else:
+                        print(f" -> [UYARI] Google Gemini API ({current_model}) HTTP Hatası: {res.status_code}")
+                        break
+                except requests.exceptions.Timeout:
+                    print(f" -> [UYARI] Google Gemini API ({current_model}) zaman aşımına uğradı ({timeout_sec}s, Deneme {attempt + 1}/{retries + 1}).")
+                    if attempt < retries:
+                        time.sleep(1.0)
+                        continue
+                except Exception as e:
+                    print(f" -> [UYARI] Google Gemini API çağrısı sırasında hata ({current_model}): {e}")
+                    break
+
+        return None
+
+    def _ollama_tekil_sentez(self, istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Ollama ile tek bir bölüm için odaklı pedagojik sentez."""
+        tout = timeout or self.ollama_section_timeout
         try:
             payload = {
                 "model": self.ollama_model,
@@ -123,7 +215,7 @@ class GeminiAnalyzer:
                     "temperature": 0.2
                 }
             }
-            res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+            res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=tout)
             if res.status_code == 200:
                 metin = res.json().get("response", "").strip()
                 return self._json_ayristir(metin)
@@ -131,23 +223,13 @@ class GeminiAnalyzer:
             pass
         return None
 
-    def _gemini_rest_sentez(self, istemi: str, timeout: int = 5) -> Optional[Dict[str, Any]]:
-        """Gemini REST API ile hızlı pedagojik sentez."""
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": istemi}]}],
-                "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
-            }
-            res = requests.post(url, json=payload, timeout=timeout)
-            if res.status_code == 200:
-                cands = res.json().get("candidates", [])
-                if cands and "content" in cands[0]:
-                    t = cands[0]["content"]["parts"][0]["text"]
-                    return self._json_ayristir(t)
-        except Exception:
-            pass
-        return None
+    def _gemini_rest_sentez(self, istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Gemini REST API ile hızlı pedagojik sentez (exponential backoff ve retry korumalı)."""
+        payload = {
+            "contents": [{"parts": [{"text": istemi}]}],
+            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
+        }
+        return self._gemini_api_cagir(payload, timeout=timeout or self.gemini_timeout)
 
     def bolum_pedagojik_sentezle(
         self,
@@ -196,39 +278,44 @@ GÖREV VE KATI PEDAGOJİK KURALLAR:
 SADECE JSON döndür."""
 
         # 1. Tercih: Yerel Ollama
-        veri = self._ollama_tekil_sentez(istemi, timeout=35)
+        veri = self._ollama_tekil_sentez(istemi, timeout=self.ollama_section_timeout)
         if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 120:
             print(f" -> [Bölüm {b_no}] Ollama ile pedagojik harmanlama ve zenginleştirme tamamlandı.")
             bolum["duzenlenmis_anlatim"] = veri["duzenlenmis_anlatim"]
             if "onemli_kavramlar" in veri and veri["onemli_kavramlar"]:
                 bolum["onemli_kavramlar"] = veri["onemli_kavramlar"]
+            bolum["kaynak_tipi"] = "ollama"
             return bolum
 
         # 2. Tercih: Google Gemini REST
         if self._api_anahtari_var_mi():
-            veri = self._gemini_rest_sentez(istemi, timeout=12)
+            veri = self._gemini_rest_sentez(istemi, timeout=self.gemini_timeout)
             if veri and "duzenlenmis_anlatim" in veri and len(veri["duzenlenmis_anlatim"]) > 120:
                 print(f" -> [Bölüm {b_no}] Gemini API ile pedagojik harmanlama ve zenginleştirme tamamlandı.")
                 bolum["duzenlenmis_anlatim"] = veri["duzenlenmis_anlatim"]
                 if "onemli_kavramlar" in veri and veri["onemli_kavramlar"]:
                     bolum["onemli_kavramlar"] = veri["onemli_kavramlar"]
+                bolum["kaynak_tipi"] = "gemini"
                 return bolum
 
         # 3. Güvenlik Ağı: Zengin pedagojik içeriği koru
         print(f" -> [Bölüm {b_no}] Yerel/API sentez yanıt vermedi; zengin pedagojik fasikül metni devrede.")
+        if "kaynak_tipi" not in bolum:
+            bolum["kaynak_tipi"] = "rag_fallback"
         return bolum
 
-    def _ollama_ile_analiz_et(self, sistem_istemi: str, timeout: int = 25) -> Optional[Dict[str, Any]]:
+    def _ollama_ile_analiz_et(self, sistem_istemi: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """1. Tercih: Yerel Ollama modeli (qwen3.5:4b) ile analiz."""
+        tout = timeout or self.ollama_analysis_timeout
         try:
-            print(f"[Yapay Zeka - 1. Tercih] Yerel Ollama ({self.ollama_model}) modeline istek gönderiliyor...")
+            print(f"[Yapay Zeka - 1. Tercih] Yerel Ollama ({self.ollama_model}) modeline istek gönderiliyor (Zaman aşımı: {tout}s)...")
             payload = {
                 "model": self.ollama_model,
                 "prompt": sistem_istemi,
                 "stream": False,
                 "format": "json"
             }
-            res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+            res = requests.post(f"{self.ollama_url.rstrip('/')}/api/generate", json=payload, timeout=tout)
             if res.status_code == 200:
                 metin = res.json().get("response", "").strip()
                 veri = self._json_ayristir(metin)
@@ -244,29 +331,16 @@ SADECE JSON döndür."""
         return None
 
     def _gemini_ile_analiz_et(self, sistem_istemi: str) -> Optional[Dict[str, Any]]:
-        """2. Tercih (Fallback): Google Gemini API (gemini-3.8-flash) ile analiz."""
-        try:
-            print(f"[Yapay Zeka - 2. Tercih (Fallback)] Google Gemini API ({self.model}) modeline istek gönderiliyor...")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": sistem_istemi}]}],
-                "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
-            }
-            res = requests.post(url, json=payload, timeout=15)
-            if res.status_code == 200:
-                cands = res.json().get("candidates", [])
-                if cands and "content" in cands[0]:
-                    t = cands[0]["content"]["parts"][0]["text"]
-                    veri = self._json_ayristir(t.strip())
-                    if veri and "bolumler" in veri and len(veri["bolumler"]) > 0:
-                        print(f" -> [BAŞARILI] Google Gemini API ({self.model}) analiz ve materyal bölümlendirmeyi tamamladı ({len(veri['bolumler'])} bölüm).")
-                        return veri
-            elif res.status_code == 429:
-                print(f" -> [UYARI] Google Gemini API günlük kota limiti (429 Quota Exceeded) dolmuş.")
-            else:
-                print(f" -> [UYARI] Google Gemini API yanıt hatası: HTTP {res.status_code}")
-        except Exception as e:
-            print(f" -> [UYARI] Canlı Gemini analiz hatası: {e}")
+        """2. Tercih (Fallback): Google Gemini API (gemini-3.8-flash) ile analiz (exponential backoff ve retry korumalı)."""
+        print(f"[Yapay Zeka - 2. Tercih (Fallback)] Google Gemini API ({self.model}) modeline istek gönderiliyor...")
+        payload = {
+            "contents": [{"parts": [{"text": sistem_istemi}]}],
+            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
+        }
+        veri = self._gemini_api_cagir(payload, timeout=self.gemini_timeout)
+        if veri and "bolumler" in veri and len(veri["bolumler"]) > 0:
+            print(f" -> [BAŞARILI] Google Gemini API ({self.model}) analiz ve materyal bölümlendirmeyi tamamladı ({len(veri['bolumler'])} bölüm).")
+            return veri
         return None
 
     def analiz_et(
@@ -327,6 +401,9 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
         # 1. Aşama: Yerel Ollama Modeli (qwen3.5:4b)
         veri = self._ollama_ile_analiz_et(sistem_istemi)
         if veri:
+            veri["uretim_kaynagi"] = "ollama"
+            for b in veri.get("bolumler", []):
+                b["kaynak_tipi"] = "ollama"
             return veri
 
         # 2. Aşama: Google Gemini API (Ollama ulaşılamazsa)
@@ -334,11 +411,19 @@ SADECE geçerli bir JSON nesnesi döndür (Markdown ```json bloğu içinde)."""
             print("[BİLGİ] Yerel Ollama yanıt vermedi, Google Gemini API devreye alınıyor...")
             veri = self._gemini_ile_analiz_et(sistem_istemi)
             if veri:
+                veri["uretim_kaynagi"] = "gemini"
+                for b in veri.get("bolumler", []):
+                    b["kaynak_tipi"] = "gemini"
                 return veri
 
         # 3. Aşama: Güvenlik Ağı (Her ikisi de başarısız olursa)
         print("[BİLGİ] Yapay zeka servislerine ulaşılamadı. 'Pedagojik Seviye Filtreli Simülasyon' devreye alınıyor...")
-        return self._orijinal_materyal_simulasyonu(egitim_seviyesi, sinif_duzeyi, ders_adi, video_basligi, video_yolu=video_yolu)
+        veri = self._orijinal_materyal_simulasyonu(egitim_seviyesi, sinif_duzeyi, ders_adi, video_basligi, video_yolu=video_yolu)
+        kaynak_etiketi = "rag_fallback" if rag_baglami else "static_fallback"
+        veri["uretim_kaynagi"] = kaynak_etiketi
+        for b in veri.get("bolumler", []):
+            b["kaynak_tipi"] = kaynak_etiketi
+        return veri
 
     def _orijinal_materyal_simulasyonu(
         self,

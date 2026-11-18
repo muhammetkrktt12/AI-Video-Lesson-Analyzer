@@ -46,12 +46,22 @@ DEFAULT_SEVIYE = "İlkokul"
 # --- GOOGLE GEMINI API AYARLARI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "20"))
+GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+_gemini_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-flash-latest")
+GEMINI_FALLBACK_MODELS = [m.strip() for m in _gemini_fallbacks.split(",") if m.strip()]
 
 # --- OLLAMA VE LOKAL MODEL AYARLARI (Birincil Model) ---
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "embeddinggemma")
 CHAT_MODEL = OLLAMA_MODEL
+
+# CPU üzerinde 4B+ model çıkarımı için gerçekçi zaman aşımı süreleri (saniye)
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
+OLLAMA_ANALYSIS_TIMEOUT = int(os.getenv("OLLAMA_ANALYSIS_TIMEOUT", "90"))
+OLLAMA_QUESTION_TIMEOUT = int(os.getenv("OLLAMA_QUESTION_TIMEOUT", "60"))
+OLLAMA_SECTION_TIMEOUT = int(os.getenv("OLLAMA_SECTION_TIMEOUT", "45"))
 
 # --- VIDEO İNDİRME AYARLARI ---
 DEFAULT_VIDEO_RESOLUTION = "720"  # 360 veya 720
